@@ -2117,16 +2117,19 @@ function routeCore() {
   viewRoles();
 }
 
-const PSGI_SW_VERSION = '25.8';
+const PSGI_SW_VERSION = '25.9';
 
 async function startApp() {
+  const splashVisible = $('#launchSplash')?.hidden === false;
   const loadingSince = performance.now();
   await openDB();
   await seed();
   await loadLocalPhoneDirectory();
   await initializeRelease();
-  const remaining = 850 - (performance.now() - loadingSince);
-  if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+  if (splashVisible) {
+    const remaining = 850 - (performance.now() - loadingSince);
+    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+  }
   renderNet();
   window.addEventListener('hashchange', router);
   counts();

@@ -14,7 +14,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="ПСГИ" />
     <link rel="stylesheet" href="styles.css?v=24" />
-    <link rel="stylesheet" href="theme-v25.css?v=25.5" />
+    <link rel="stylesheet" href="theme-v25.css?v=25.9" />
   </head>
   <body>
     <header class="top">
@@ -26,10 +26,27 @@
         title="Нажмите, чтобы показать работу без интернета"
       ></button>
     </header>
-    <main id="app"><div class="app-loading" role="status">
-      <div class="loading-art"><img src="psgi-splash-reference.png" alt="ПСГИ. Система подготовки и контроля работ электромонтёров" width="412" height="955"></div>
-      <div class="loading-status"><progress aria-label="Загрузка приложения"></progress><span>Загрузка…</span></div>
-    </div></main>
+    <main id="app">
+      <p id="refreshStatus" class="meta" role="status">Загрузка…</p>
+      <div id="launchSplash" class="app-loading" role="status" hidden>
+        <div class="loading-art"><img src="psgi-splash-reference.png" alt="ПСГИ. Система подготовки и контроля работ электромонтёров" width="412" height="955"></div>
+        <div class="loading-status"><progress aria-label="Загрузка приложения"></progress><span>Загрузка…</span></div>
+      </div>
+    </main>
+    <script>
+      {
+        const navigation = performance.getEntriesByType('navigation')[0];
+        let newLaunch = navigation ? navigation.type === 'navigate' : performance.navigation?.type === 0;
+        try {
+          if (sessionStorage.getItem('psgiOpened')) newLaunch = false;
+          sessionStorage.setItem('psgiOpened', '1');
+        } catch {}
+        if (newLaunch) {
+          document.getElementById('launchSplash').hidden = false;
+          document.getElementById('refreshStatus').hidden = true;
+        }
+      }
+    </script>
     <div id="toast" class="toast" role="status"></div>
     <script src="potee.js?v=24"></script>
     <script src="norms.js?v=24"></script>
@@ -39,7 +56,7 @@
     <script src="phone-source.js?v=25.2"></script>
     <script src="private-materials.js?v=25.5"></script>
     <script src="safety-library.js?v=25.3"></script>
-    <script src="app.js?v=25.8"></script>
+    <script src="app.js?v=25.9"></script>
     <script src="vendor/pdf-lib.min.js?v=24"></script>
     <script src="vendor/fontkit.umd.min.js?v=24"></script>
     <script src="pdf-export.js?v=24"></script>
