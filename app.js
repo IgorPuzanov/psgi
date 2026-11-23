@@ -136,6 +136,15 @@ const POSITIONS = ['Электромонтёр', 'Мастер ПСГИ', 'На�
 function staffPos(name) { try { return JSON.parse(lsGet('staffPos') || '{}')[name] || ''; } catch (e) { return ''; } }
 function setStaffPos(name, pos) { let m = {}; try { m = JSON.parse(lsGet('staffPos') || '{}'); } catch (e) {} m[name] = pos; lsSet('staffPos', JSON.stringify(m)); }
 const addStaff = names => addToList('staff', names);
+function staffForCrewField(field, selected) {
+  const staff = getStaff();
+  const hasCrewRoles = staff.some(name => /^(начальник|мастер|электромонт[её]р)(?:\s|$)/i.test(staffPos(name).trim()));
+  const options = field === 'respHead' && hasCrewRoles
+    ? staff.filter(name => /^(начальник|мастер)(?:\s|$)/i.test(staffPos(name).trim()))
+    : staff;
+  if (selected && !options.includes(selected)) options.push(selected);
+  return options;
+}
 // Запомненные значения (например, норма переходного сопротивления для типа выключателя и тока)
 function memoGet(id, key) { try { return JSON.parse(lsGet('memo:' + id) || '{}')[key]; } catch (e) { return undefined; } }
 function memoSet(id, key, val) {
@@ -1209,12 +1218,10 @@ async function viewEdit(role, id) {
 
   const typeOpts = sel => `<option value="">— выберите испытание —</option><option value="__ktpn">Испытание КТПН — комплекс</option>` +
     Object.entries(WORK_TYPES).map(([key, w]) => `<option value="${key}" ${key === sel ? 'selected' : ''}>${esc(w.short)}</option>`).join('');
-  const personOpts = sel => {
-    const staff = getStaff();
-    if (sel && !staff.includes(sel)) staff.push(sel);
-    return `<option value="">— не назначен —</option>` + staff.map(n => `<option ${n === sel ? 'selected' : ''}>${esc(n)}</option>`).join('') +
-      `<option value="__new">+ Новый человек…</option>`;
-  };
+  const personOpts = (field, selected) =>
+    `<option value="">— не назначен —</option>` +
+    staffForCrewField(field, selected).map(name => `<option ${name === selected ? 'selected' : ''}>${esc(name)}</option>`).join('') +
+    `<option value="__new">+ Новый человек…</option>`;
   const stageNames = ['Работа', 'Инструкции', 'Инструктаж', 'Готово'];
   const next = number => `<button class="btn accent editor-next" type="button" data-editor-step="${number}">Далее <span aria-hidden="true">›</span></button>`;
   app.innerHTML = `
@@ -1317,9 +1324,9 @@ async function viewEdit(role, id) {
   };
   const drawCrew = () => {
     crewBox.innerHTML = ROLES.map(([key, l]) => `<label class="field"><span class="lbl">${l}</span>
-      <select data-role="${key}">${personOpts(crew[key])}</select></label>`).join('') +
+      <select data-role="${key}">${personOpts(key, crew[key])}</select></label>`).join('') +
       `<span class="lbl">Члены бригады</span>` +
-      crew.members.map((m, i) => `<div class="multi"><select data-mi="${i}">${personOpts(m)}</select>
+      crew.members.map((m, i) => `<div class="multi"><select data-mi="${i}" aria-label="Член бригады ${i + 1}">${personOpts('member', m)}</select>
         ${crew.members.length > 1 ? `<button type="button" class="x" data-mdel="${i}" aria-label="Убрать">×</button>` : ''}</div>`).join('') +
       `<button type="button" class="btn ghost small" id="addMember">+ Добавить члена бригады</button><div class="gap"></div>`;
     $('#addMember').onclick = () => { crew.members.push(''); drawCrew(); };
@@ -1333,7 +1340,7 @@ async function viewEdit(role, id) {
       '<button type="button" class="btn ghost small" id="addPerson">+ Добавить человека</button>';
     $('#addPerson').onclick = async () => { const n = (await askText('Новый человек', '', '', 'Фамилия и инициалы') || '').trim(); if (n) { addStaff([n]); drawPeople(); drawCrew(); } };
   };
-  pplBox.onchange = e => { if (e.target.dataset.pos !== undefined) { setStaffPos(e.target.dataset.pos, e.target.value); toast('Должность сохранена'); } };
+  pplBox.onchange = e => { if (e.target.dataset.pos !== undefined) { setStaffPos(e.target.dataset.pos, e.target.value); drawCrew(); toast('Должность сохранена'); } };
   pplBox.onclick = e => {
     const n = e.target.dataset.pdel;
     if (n === undefined || !confirm(`Удалить «${n}» из списка людей?`)) return;
@@ -1413,7 +1420,14 @@ async function viewEdit(role, id) {
     let val = s.value;
     if (val === '__new') {
       val = (await askText('Новый человек', '', '', 'Фамилия и инициалы') || '').trim();
-      if (val) addStaff([val]);
+      if (!val) { drawCrew(); return; }
+      addStaff([val]);
+      drawPeople();
+      if (s.dataset.role === 'respHead' && !staffForCrewField('respHead').includes(val)) {
+        toast('Укажи должность начальника или мастера в списке людей.');
+        drawCrew();
+        return;
+      }
     }
     if (s.dataset.role) crew[s.dataset.role] = val;
     if (s.dataset.mi !== undefined) crew.members[+s.dataset.mi] = val;
@@ -2103,7 +2117,7 @@ function routeCore() {
   viewRoles();
 }
 
-const PSGI_SW_VERSION = '25.7';
+const PSGI_SW_VERSION = '25.8';
 
 async function startApp() {
   const loadingSince = performance.now();
