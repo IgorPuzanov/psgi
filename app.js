@@ -2098,6 +2098,8 @@ function routeCore() {
   viewRoles();
 }
 
+const PSGI_SW_VERSION = '25.6';
+
 async function startApp() {
   const loadingSince = performance.now();
   await openDB();
@@ -2112,5 +2114,5 @@ async function startApp() {
   router();
   syncPending();
   checkBirthdays();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js?v=25.5').catch(error => { console.error(error); toast('Автономная версия ещё не сохранена. Проверь сеть и обнови страницу.'); });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${PSGI_SW_VERSION}`).catch(error => { console.error(error); toast('Автономная версия ещё не сохранена. Проверь сеть и обнови страницу.'); });
 }
