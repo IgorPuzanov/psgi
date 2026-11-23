@@ -32,12 +32,15 @@ function bdayBannerHTML() {
 }
 async function importStaffList(file) {
   if (!file || file.size > 1024 * 1024) throw new Error('Выбери файл списка работников ПСГИ до 1 МБ.');
-  const data = JSON.parse(await file.text());
+  return saveStaffList(parseStaffList(JSON.parse(await file.text())));
+}
+
+function parseStaffList(data) {
   if (data?.format !== 'psgi-staff' || data.version !== 1 || !Array.isArray(data.people) || !data.people.length) {
     throw new Error('Файл не является списком работников ПСГИ.');
   }
   const names = new Set();
-  const people = data.people.map(person => {
+  return data.people.map(person => {
     if (typeof person?.name !== 'string' || !person.name.trim() || person.name.length > 150 ||
         typeof person.position !== 'string' || person.position.length > 100 ||
         typeof person.phone !== 'string' || person.phone.length > 40) {
@@ -49,13 +52,16 @@ async function importStaffList(file) {
     names.add(key);
     return { name, position: person.position.trim(), phone: person.phone.trim() };
   });
+}
+
+function saveStaffList(people, { fillOnly = false } = {}) {
   const staff = getList('staff');
   const positions = jget('staffPos', {});
   const contacts = staffContacts();
   for (const { name, position, phone } of people) {
     if (!staff.includes(name)) staff.push(name);
-    if (position) positions[name] = position;
-    if (phone) contacts[name] = { ...(contacts[name] || {}), phone };
+    if (position && (!fillOnly || !positions[name])) positions[name] = position;
+    if (phone && (!fillOnly || !contacts[name]?.phone)) contacts[name] = { ...(contacts[name] || {}), phone };
   }
   const order = [...new Set([...people.map(person => person.name), ...getList('staffOrder')])];
   const settings = { staff, staffOrder: order, staffPos: positions, staffContact: contacts };
@@ -77,7 +83,8 @@ function viewPeople(role) {
   const staff = getStaff();
   const bd = bdays();
   app.innerHTML = `${bdayBannerHTML()}
-    <div class="card"><p class="meta">Должность, день рождения, телефон и табельный номер. В день рождения придёт уведомление с поздравлением (на этом телефоне, когда откроете приложение).</p></div>
+    <div class="card"><p class="meta">Должность, день рождения, телефон и табельный номер. В день рождения придёт уведомление с поздравлением (на этом телефоне, когда откроете приложение).</p>
+    ${privateMaterialsLink(role)}</div>
     ${staff.map(n => `<div class="card person-c"><div class="pc-top"><b>${esc(n)}</b><button type="button" class="del-x sm" data-pdel="${esc(n)}" aria-label="Удалить">${icon('trash')}</button></div>
       <div class="pc-row"><label class="field"><span class="lbl">Должность</span><select data-pos="${esc(n)}"><option value="">—</option>${[...new Set([...POSITIONS, staffPos(n)].filter(Boolean))].map(p => `<option ${p === staffPos(n) ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></label>
       <label class="field"><span class="lbl">День рождения</span><input type="date" data-bd="${esc(n)}" value="${esc(bd[n] || '')}"></label></div>

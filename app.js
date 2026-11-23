@@ -2117,7 +2117,7 @@ function routeCore() {
   viewRoles();
 }
 
-const PSGI_SW_VERSION = '25.9';
+const PSGI_SW_VERSION = '25.10';
 
 async function startApp() {
   const splashVisible = $('#launchSplash')?.hidden === false;
