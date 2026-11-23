@@ -124,10 +124,15 @@ function addToList(key, names) {
   names.filter(Boolean).forEach(n => s.add(n));
   lsSet(key, JSON.stringify([...s].sort((a, b) => a.localeCompare(b, 'ru'))));
 }
-const getStaff = () => getList('staff');
+const getStaff = () => {
+  const names = getList('staff');
+  const available = new Set(names);
+  const ordered = getList('staffOrder').filter(name => available.has(name));
+  return [...new Set([...ordered, ...names])];
+};
 const removeFromList = (key, name) => lsSet(key, JSON.stringify(getList(key).filter(x => x !== name)));
 // Должности людей (для подписей в протоколе)
-const POSITIONS = ['Электромонтёр', 'Мастер ПС ГИ', 'Начальник ПС ГИ', 'Инженер'];
+const POSITIONS = ['Электромонтёр', 'Мастер ПСГИ', 'Начальник ПСГИ', 'Инженер'];
 function staffPos(name) { try { return JSON.parse(lsGet('staffPos') || '{}')[name] || ''; } catch (e) { return ''; } }
 function setStaffPos(name, pos) { let m = {}; try { m = JSON.parse(lsGet('staffPos') || '{}'); } catch (e) {} m[name] = pos; lsSet('staffPos', JSON.stringify(m)); }
 const addStaff = names => addToList('staff', names);
@@ -2098,7 +2103,7 @@ function routeCore() {
   viewRoles();
 }
 
-const PSGI_SW_VERSION = '25.6';
+const PSGI_SW_VERSION = '25.7';
 
 async function startApp() {
   const loadingSince = performance.now();

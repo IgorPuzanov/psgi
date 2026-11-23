@@ -30,9 +30,51 @@ function bdayBannerHTML() {
   return `<a class="bday" href="#/h/people"><span class="bday-ic">🎂</span><span>${today.length ? `<b>Сегодня день рождения: ${today.map(x => esc(x.n)).join(', ')}!</b><br>Поздравляем! Здоровья, удачи и безопасной работы.` : ''}
     ${soon.length ? `<small>${today.length ? '<br>' : ''}Скоро: ${soon.map(x => `${esc(x.n)} — ${x.d === 1 ? 'завтра' : 'через ' + x.d + ' дн.'}`).join('; ')}</small>` : ''}</span></a>`;
 }
+async function importStaffList(file) {
+  if (!file || file.size > 1024 * 1024) throw new Error('Выбери файл списка работников ПСГИ до 1 МБ.');
+  const data = JSON.parse(await file.text());
+  if (data?.format !== 'psgi-staff' || data.version !== 1 || !Array.isArray(data.people) || !data.people.length) {
+    throw new Error('Файл не является списком работников ПСГИ.');
+  }
+  const names = new Set();
+  const people = data.people.map(person => {
+    if (typeof person?.name !== 'string' || !person.name.trim() || person.name.length > 150 ||
+        typeof person.position !== 'string' || person.position.length > 100 ||
+        typeof person.phone !== 'string' || person.phone.length > 40) {
+      throw new Error('В списке есть запись неверного формата.');
+    }
+    const name = person.name.trim().replace(/\s+/g, ' ');
+    const key = name.toLocaleLowerCase('ru').replaceAll('ё', 'е');
+    if (names.has(key)) throw new Error('В списке есть повторяющееся имя.');
+    names.add(key);
+    return { name, position: person.position.trim(), phone: person.phone.trim() };
+  });
+  const staff = getList('staff');
+  const positions = jget('staffPos', {});
+  const contacts = staffContacts();
+  for (const { name, position, phone } of people) {
+    if (!staff.includes(name)) staff.push(name);
+    if (position) positions[name] = position;
+    if (phone) contacts[name] = { ...(contacts[name] || {}), phone };
+  }
+  const order = [...new Set([...people.map(person => person.name), ...getList('staffOrder')])];
+  const settings = { staff, staffOrder: order, staffPos: positions, staffContact: contacts };
+  const previous = Object.keys(settings).map(key => [key, lsGet(key)]);
+  try {
+    for (const [key, value] of Object.entries(settings)) lsSet(key, JSON.stringify(value));
+  } catch (error) {
+    for (const [key, value] of previous) {
+      if (value === null) localStorage.removeItem(key);
+      else lsSet(key, value);
+    }
+    throw error;
+  }
+  return people.length;
+}
+
 function viewPeople(role) {
-  header('Люди', homeOf(role));
-  const staff = getStaff().slice().sort((a, b) => a.localeCompare(b, 'ru'));
+  header('Работники', homeOf(role));
+  const staff = getStaff();
   const bd = bdays();
   app.innerHTML = `${bdayBannerHTML()}
     <div class="card"><p class="meta">Должность, день рождения, телефон и табельный номер. В день рождения придёт уведомление с поздравлением (на этом телефоне, когда откроете приложение).</p></div>
@@ -41,7 +83,20 @@ function viewPeople(role) {
       <label class="field"><span class="lbl">День рождения</span><input type="date" data-bd="${esc(n)}" value="${esc(bd[n] || '')}"></label></div>
       <div class="pc-row"><label class="field"><span class="lbl">Телефон</span><input type="tel" data-phone="${esc(n)}" value="${esc(staffContacts()[n]?.phone||'')}"></label><label class="field"><span class="lbl">Табельный номер</span><input data-personnel="${esc(n)}" value="${esc(staffContacts()[n]?.personnel||'')}" autocomplete="off"></label></div>${staffContacts()[n]?.phone?`<a class="btn ghost small" href="tel:${esc(staffContacts()[n].phone.replace(/[^+\d]/g,''))}">Позвонить</a>`:''}
       ${bd[n] && daysToBday(bd[n]) === 0 ? '<p class="bday-today">🎉 Сегодня день рождения!</p>' : ''}</div>`).join('') || '<div class="card meta">Список пуст.</div>'}
-    <button class="btn accent" id="pAdd">+ Добавить человека</button>`;
+    <button class="btn accent" id="pAdd">+ Добавить человека</button>
+    <label class="btn ghost file-btn mt">Загрузить список работников<input id="staffImport" type="file" accept=".json,application/json"></label>`;
+  const importer = $('#staffImport');
+  importer.onchange = async () => {
+    try {
+      if (!importer.files[0]) return;
+      const count = await importStaffList(importer.files[0]);
+      toast(`Работников из списка: ${count}`);
+      viewPeople(role);
+    } catch (error) {
+      toast(error instanceof SyntaxError ? 'Не удалось прочитать список работников.' : error.message);
+      importer.value = '';
+    }
+  };
   app.querySelectorAll('[data-phone],[data-personnel]').forEach(input=>input.oninput=()=>saveStaffContact(input.dataset.phone??input.dataset.personnel,input.dataset.phone!==undefined?'phone':'personnel',input.value.trim()));
   app.onchange = e => {
     const el = e.target;
