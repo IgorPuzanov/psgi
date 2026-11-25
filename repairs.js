@@ -135,35 +135,61 @@ function localNormTableHTML(id) {
 }
 function viewNormTable(role,id) { header('РД: таблица '+id,`/${role}`);app.innerHTML=`<div class="card tb-text">${normTables.has(id)?paras(normTables.get(id)):'Таблица не найдена в локальном тексте.'}</div>`; }
 
-// Voice input is attached to the field that will receive the text.
-let inlineVoice;
+let voiceField;
+function addFieldMicrophone(field) {
+  if (field.dataset.voiceField||field.readOnly||field.disabled) return;
+  field.dataset.voiceField='1';
+  const label=(field.closest('.field')?.querySelector('.lbl')?.textContent||field.getAttribute('aria-label')||field.placeholder||'поле').replace(/\*/g,'').trim();
+  const controls=document.createElement('div'); controls.className='voice-field';
+  const control=field.parentElement.matches('.inp-wrap')?field.parentElement:field;
+  control.before(controls); controls.append(control);
+  const button=document.createElement('button');
+  button.type='button'; button.className='btn ghost voice-mic no-print';
+  button.innerHTML='<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg>';
+  button.setAttribute('aria-label','Ввести голосом: '+label);
+  button.setAttribute('aria-pressed','false');
+  const status=document.createElement('span');
+  status.className='voice-status no-print';
+  status.setAttribute('role','status');
+  controls.append(button); controls.after(status);
+  button.onclick=event=>{
+    event.preventDefault();
+    const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!Recognition){status.textContent='В этом браузере можно диктовать с помощью микрофона на экранной клавиатуре.';return;}
+    if(voiceRecognition){voiceRecognition.stop();return;}
+    const recognition=new Recognition();voiceRecognition=recognition;voiceField=field;recognition.lang='ru-RU';
+    status.textContent='Слушаю…';button.setAttribute('aria-pressed','true');
+    recognition.onresult=e=>{
+      if(!field.isConnected)return;
+      const spoken=e.results[0][0].transcript.trim();
+      if(field.type==='number'||field.inputMode==='decimal'){
+        const number=spoken.replace(/^минус\s+/i,'-').replace(/\s*запятая\s*/i,'.').replace(',','.').replace(/\s/g,'');
+        if(!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(number)){status.textContent='Продиктуйте одно число или введите его вручную.';return;}
+        field.value=number;
+      }else{
+        const start=field.selectionStart??field.value.length,end=field.selectionEnd??start;
+        field.setRangeText(spoken,start,end,'end');
+      }
+      field.dispatchEvent(new Event('input',{bubbles:true}));
+      field.dispatchEvent(new Event('change',{bubbles:true}));
+      status.textContent='Значение внесено в поле.';
+    };
+    recognition.onerror=e=>{status.textContent=e.error==='not-allowed'?'Разреши микрофон в настройках браузера.':'Не удалось распознать речь. Попробуй ещё раз.';};
+    recognition.onend=()=>{voiceRecognition=null;voiceField=null;button.setAttribute('aria-pressed','false');if(status.textContent==='Слушаю…')status.textContent='';};
+    try{recognition.start();}catch{recognition.onend();status.textContent='Не удалось включить микрофон.';}
+  };
+}
 voiceButton=function() {
   $('#voiceInput')?.remove();
-  if (inlineVoice && !inlineVoice.field.isConnected) { inlineVoice.controls.remove(); inlineVoice=null; }
+  if (voiceRecognition&&voiceField&&!voiceField.isConnected) voiceRecognition.abort();
+  app.querySelectorAll('.field textarea,.field input:not([type]),.field input:is([type=text],[type=search],[type=number])').forEach(addFieldMicrophone);
 };
-document.addEventListener('focusin',event=>{
-  const field=event.target;
-  if (!field.matches('textarea,input:not([type]),input[type="text"],input[type="search"]')||field.readOnly||field.disabled) return;
-  if (inlineVoice?.field===field) return;
-  if (voiceRecognition) voiceRecognition.stop();
-  inlineVoice?.controls.remove();
-  const controls=document.createElement('div'); controls.className='inline-voice no-print';
-  const label=field.closest('.field')?.querySelector('.lbl')?.textContent||field.getAttribute('aria-label')||field.placeholder||'Сообщение';
-  controls.innerHTML=`<button type="button" class="btn ghost small">🎙 Ввести голосом: ${esc(label.replace(/\*/g,'').trim())}</button><span role="status" class="hint"></span>`;
-  (field.closest('.field')||field).after(controls);inlineVoice={field,controls};
-  const button=controls.querySelector('button'),status=controls.querySelector('[role=status]');
-  button.onclick=()=>{
-    const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!Recognition){status.textContent='Используй микрофон на клавиатуре телефона: этот браузер не поддерживает распознавание.';return;}
-    if(voiceRecognition){voiceRecognition.stop();return;}
-    const recognition=new Recognition();voiceRecognition=recognition;recognition.lang='ru-RU';
-    status.textContent='Слушаю. Текст появится в поле «'+label+'».';button.textContent='Остановить запись';
-    recognition.onresult=e=>{if(!field.isConnected)return;field.value=[field.value.trim(),e.results[0][0].transcript].filter(Boolean).join(' ');field.dispatchEvent(new Event('input',{bubbles:true}));field.dispatchEvent(new Event('change',{bubbles:true}));status.textContent='Текст внесён в поле.';};
-    recognition.onerror=e=>{status.textContent=e.error==='not-allowed'?'Разреши микрофон в настройках браузера.':'Не удалось распознать речь. Попробуй ещё раз.';};
-    recognition.onend=()=>{voiceRecognition=null;button.textContent='🎙 Ввести голосом: '+label;};
-    try{recognition.start();}catch{voiceRecognition=null;status.textContent='Не удалось включить микрофон.';}
-  };
-});
+let voiceUpdatePending=false;
+new MutationObserver(records=>{
+  if (voiceUpdatePending||!records.some(record=>[...record.addedNodes].some(node=>node.nodeType===1&&(node.matches('input,textarea')||node.querySelector('input:not([data-voice-field]), textarea:not([data-voice-field])'))))) return;
+  voiceUpdatePending=true;
+  requestAnimationFrame(()=>{voiceUpdatePending=false;voiceButton();});
+}).observe(app,{childList:true,subtree:true});
 
 const enhanceBefore18=enhancePage;
 enhancePage=async function(role,parts) {
@@ -195,7 +221,7 @@ enhancePage=async function(role,parts) {
 async function showOfflineReadiness() {
   let status=$('#offlineReadiness');if(!status){status=document.createElement('p');status.id='offlineReadiness';status.className='hint';app.append(status);}
   try{
-    const cache=await caches.open(`psgi-v${PSGI_SW_VERSION}`),required=['index.html','styles.css','theme-v25.css','app.js','data.js','norms.js','potee.js','extras.js','kusty.js','phone-source.js','private-materials.js','safety-library.js','psgi-dashboard-reference.png','psgi-splash-reference.png','psgi-icon-192.png','psgi-icon-512.png','manifest.json','icon.svg','improvements.js','repairs.js','monthly.js','device-registry.js','field-work.js','engineering-ideas.js','visual-guides.js','pdf-export.js','ideas.js','chat.js','vendor/pdf-lib.min.js','vendor/fontkit.umd.min.js','vendor/NotoSans-Regular.ttf'];
+    const cache=await caches.open(`psgi-v${PSGI_SW_VERSION}`),required=['index.html','styles.css','theme-v25.css','app.js','data.js','norms.js','potee.js','extras.js','kusty.js','phone-source.js','private-materials.js','safety-library.js','psgi-logo-approved.png','psgi-approved-icon-192.png','psgi-approved-icon-512.png','psgi-splash-reference.png','manifest.json','icon.svg','improvements.js','repairs.js','monthly.js','device-registry.js','field-work.js','engineering-ideas.js','visual-guides.js','pdf-export.js','ideas.js','chat.js','vendor/pdf-lib.min.js','vendor/fontkit.umd.min.js','vendor/NotoSans-Regular.ttf'];
     const files=await Promise.all(required.map(file=>cache.match(new URL(file,location.href.split('#')[0]))));
     const controller = navigator.serviceWorker?.controller;
     const controlled = controller && new URL(controller.scriptURL).searchParams.get('v') === PSGI_SW_VERSION;

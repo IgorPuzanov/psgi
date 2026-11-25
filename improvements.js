@@ -450,7 +450,7 @@ async function enhancePage(role, parts) {
   }
   if (parts.length === 0 || parts.length === 1 || ['manuals', 'device', 'training'].includes(parts[1])) {
     const profile = document.createElement('label'); profile.className = 'profile-selector no-print'; profile.innerHTML = `<span>Сотрудник</span><select id="currentPerson"><option value="">Выбрать себя</option>${getStaff().map(n => `<option ${n === me() ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
-    if (!parts.length) app.querySelector('.dashboard-utilities').after(profile);
+    if (!parts.length) app.querySelector('.home-actions').after(profile);
     else app.prepend(profile);
     profile.querySelector('select').onchange = e => { lsSet('me', e.target.value); router(); };
   }

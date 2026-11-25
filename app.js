@@ -345,7 +345,7 @@ function tableHTML(f, v, ro) {
 }
 
 function fieldHTML(f, v, ro) {
-  if (f.type === 'location') return `<div class="location-field"><p class="meta">${v.latitude && v.longitude ? `Координаты: ${esc(v.latitude)}, ${esc(v.longitude)}` : 'Координаты ещё не сохранены'}</p>${ro ? '' : '<button type="button" class="btn ghost" data-geolocate>Я сейчас тут — взять координаты</button>'}</div>`;
+  if (f.type === 'location') return `<div class="location-field"><p class="meta">${positionHTML(v.latitude,v.longitude,v.locationAccuracy) || 'Координаты ещё не сохранены'}</p>${ro ? '' : '<button type="button" class="btn ghost" data-geolocate>Где я нахожусь</button>'}</div>`;
   if (f.type === 'row') {
     const resistance = /МОм/.test(f.label);
     return `<div class="row-wrap"><span class="lbl">${esc(resistance ? f.label.replace(/,\s*МОм$/, '') : f.label)}</span>
@@ -355,7 +355,7 @@ function fieldHTML(f, v, ro) {
   if (f.type === 'table') return tableHTML(f, v, ro);
   if (f.type === 'reasons') return '<div class="reasons" data-reasons></div>';
   if (f.type === 'weather') {
-    return '<p class="hint" data-weather-status role="status">Условия заполняются автоматически, когда настроена погода на главном экране. Можно ввести вручную.</p>';
+    return '<p class="hint" data-weather-status role="status">Условия берутся из заявки или по координатам испытаний. Их можно уточнить вручную.</p>';
   }
   if (f.type === 'calc') {
     return `<div class="calc" data-calc="${f.id}"><span class="calc-label">${esc(f.label)}</span>
@@ -376,6 +376,8 @@ function fieldHTML(f, v, ro) {
     input = `<textarea data-f="${f.id}" rows="3">${esc(val)}</textarea>`;
   } else if (f.type === 'date') {
     input = `<input type="date" data-f="${f.id}" value="${esc(val)}">`;
+  } else if (f.id === 'tap_position' && v.tap) {
+    input = `<input data-f="${f.id}" list="transformer-tap-positions" value="${esc(val)}"><datalist id="transformer-tap-positions"><option value="${esc(v.tap)}"></datalist>`;
   } else {
     // signed — обычная клавиатура: на цифровой клавиатуре iPhone нет минуса, а здесь «+» и «−» есть
     input = `<div class="inp-wrap ${f.unit ? 'has-unit' : ''}">${''}<input data-f="${f.id}" ${f.type === 'number' && !f.signed ? 'inputmode="decimal"' : ''} ${f.signed ? 'placeholder="например, -5 или +12"' : ''}
@@ -503,6 +505,14 @@ async function weatherJSON(url, timeout=WEATHER_TIMEOUT) {
   } finally {clearTimeout(timer);}
 }
 const validWeatherLocation=c=>c&&Number.isFinite(c.latitude)&&Number.isFinite(c.longitude)&&Math.abs(c.latitude)<=90&&Math.abs(c.longitude)<=180;
+function positionHTML(latitude, longitude, accuracy) {
+  if ([latitude,longitude].some(value=>value==null||String(value).trim()==='')) return '';
+  const coords={latitude:Number(latitude),longitude:Number(longitude)};
+  if (!validWeatherLocation(coords)) return '';
+  const lat=coords.latitude.toFixed(5), lon=coords.longitude.toFixed(5);
+  const precision=accuracy!=null&&Number.isFinite(Number(accuracy))?' · точность около '+Math.round(accuracy)+' м':'';
+  return `<span>Координаты: ${lat}, ${lon}${precision}</span> <a href="https://yandex.ru/maps/?pt=${lon},${lat}&amp;z=15&amp;l=map" target="_blank" rel="noopener noreferrer">Посмотреть на карте</a>`;
+}
 async function weatherPosition() {
   const coords=await getPos();
   return {latitude:coords.latitude,longitude:coords.longitude,accuracy:coords.accuracy,place:coords.latitude.toFixed(3)+', '+coords.longitude.toFixed(3),city:''};
@@ -512,7 +522,7 @@ async function homeWeather(mode) {
   const complete=old&&['t','pressure','humidity'].every(k=>Number.isFinite(old[k]));
   const samePlace=!saved||(validWeatherLocation(saved)&&(old?.locationKey?old.locationKey===saved.latitude.toFixed(3)+','+saved.longitude.toFixed(3):old?.place===(saved.place||'')));
   if(!mode&&complete&&samePlace&&Date.now()-old.at<30*60e3)return old;
-  if(!isOnline()){if(mode)throw new Error('Нет интернета. Показаны последние сохранённые данные.');return old;}
+  if(!isOnline()&&mode!=='locate'){if(mode)throw new Error('Нет интернета. Показаны последние сохранённые данные.');return old;}
   let c=validWeatherLocation(saved)?saved:null;
   if(mode==='city')c=await cityCoords(true,false);
   else if(mode==='locate')c=await weatherPosition();
@@ -521,9 +531,18 @@ async function homeWeather(mode) {
     let granted=false;try{granted=(await navigator.permissions?.query({name:'geolocation'}))?.state==='granted';}catch{}
     if(granted)c=await weatherPosition();
   }
-  if(!validWeatherLocation(c))throw new Error('Укажи город в блоке погоды или нажми «Моё место».');
-  const place=c.place||'',key=c.latitude.toFixed(3)+','+c.longitude.toFixed(3);
-  lsSet('weatherLocation',JSON.stringify({latitude:c.latitude,longitude:c.longitude,place,city:c.city||''}));
+  if(!validWeatherLocation(c))throw new Error('Укажи город в блоке погоды или нажми «Где я нахожусь».');
+  const key=c.latitude.toFixed(3)+','+c.longitude.toFixed(3);
+  lsSet('weatherLocation',JSON.stringify(c));
+  if(!isOnline()) throw new Error('Местоположение сохранено. Для загрузки погоды нужен интернет.');
+  const res=await weatherAtLocation(c);
+  // A slower response for the previous place must not replace the newly selected city.
+  const active=jget('weatherLocation',null);
+  if(validWeatherLocation(active)&&active.latitude.toFixed(3)+','+active.longitude.toFixed(3)===key)lsSet('homeW',JSON.stringify(res));
+  return res;
+}
+async function weatherAtLocation(c) {
+  const key=c.latitude.toFixed(3)+','+c.longitude.toFixed(3);
   if(!weatherRequests.has(key)){
     const pending=(async()=>{
       const data=await weatherJSON('https://api.open-meteo.com/v1/forecast?latitude='+c.latitude.toFixed(3)+'&longitude='+c.longitude.toFixed(3)+'&current=temperature_2m,relative_humidity_2m,surface_pressure,weather_code');
@@ -533,17 +552,15 @@ async function homeWeather(mode) {
     })();
     weatherRequests.set(key,pending);pending.finally(()=>{if(weatherRequests.get(key)===pending)weatherRequests.delete(key);}).catch(()=>{});
   }
-  const res={...await weatherRequests.get(key),place,locationKey:key};
-  // A slower response for the previous place must not replace the newly selected city.
-  const active=jget('weatherLocation',null);
-  if(validWeatherLocation(active)&&active.latitude.toFixed(3)+','+active.longitude.toFixed(3)===key)lsSet('homeW',JSON.stringify(res));
-  return res;
+  return {...await weatherRequests.get(key),place:c.place||'',locationKey:key};
 }
 const wIcon = code => code >= 71 && code <= 86 ? 'snow' : code >= 51 ? 'rain' : code >= 2 ? 'cloud' : 'sun';
 function weatherHTML(w,notice='') {
+  const position=jget('weatherLocation',null);
+  if (validWeatherLocation(position)&&w?.locationKey&&w.locationKey!==position.latitude.toFixed(3)+','+position.longitude.toFixed(3)) w=null;
   const valid=w&&Number.isFinite(w.t),stale=valid&&Date.now()-w.at>=30*60e3;
   const body=valid?`${icon(wIcon(w.code))}<span><b>${w.t>0?'+':''}${w.t}°</b><small>${esc(w.place||'здесь')}</small><small>${Number.isFinite(w.pressure)?w.pressure+' мм рт. ст.':'Давление —'}</small><small>${Number.isFinite(w.humidity)?'Влажность '+w.humidity+'%':'Влажность —'}</small></span>`:`${icon('pin')}<span>Погода —<small>Давление —</small><small>Влажность —</small><small>Указать город</small></span>`;
-  return `<button type="button" class="hw hw-set" data-hw="city" title="Выбрать город">${body}</button><small class="weather-time">${valid?`${stale?'Сохранено':'Загружено'} ${esc(new Date(w.at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}))}`:'Выбери город один раз'}</small><div class="weather-actions"><button type="button" data-hw="refresh">Обновить</button><button type="button" data-hw="locate">Моё место</button></div><p class="weather-status" role="status">${esc(notice)}</p>`;
+  return `<button type="button" class="hw hw-set" data-hw="city" title="Выбрать город">${body}</button>${position?`<p class="meta">${positionHTML(position.latitude,position.longitude,position.accuracy)}</p>`:''}<small class="weather-time">${valid?`${stale?'Сохранено':'Загружено'} ${esc(new Date(w.at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}))}`:'Выбери город один раз'}</small><div class="weather-actions"><button type="button" data-hw="refresh">Обновить</button><button type="button" data-hw="locate">Где я нахожусь</button></div><p class="weather-status" role="status">${esc(notice)}</p>`;
 }
 const homeTilesHTML = c => tile('#/h/kusty', 'rig', 'Кусты', kustOverdue()) + tile('#/h/docs/permit', 'permit', 'Наряды') + tile('#/h/devices', 'meter', 'Приборы', c.dev) +
   tile('#/h/people', 'people', 'Люди', upcomingBdays(0).length) + tile('#/h/games', 'game', 'Игры');
@@ -556,25 +573,29 @@ function viewRoles() {
     `<a class="dashboard-link${primary ? ' primary' : ''}" href="#${href}">
       ${icon(ic)}<strong>${title}</strong>${caption ? `<small>${caption}</small>` : ''}</a>`;
   app.innerHTML = `
-    <section class="dashboard-hero">
-      <div class="dashboard-welcome">${icon('people')}<div><h1>Добро пожаловать!</h1>
-      <p>${isManager(role) ? 'Начальник ПСГИ' : 'Электромонтёр ПСГИ'}</p></div>
-      <a class="dashboard-info" href="#/${role}/docs/info" aria-label="Информация для ознакомления">${icon('info')}</a></div>
+    <section class="dashboard-hero" aria-label="Производственная служба грозозащиты и изоляции">
+      <img class="psgi-logo" src="psgi-logo-approved.png" alt="ПСГИ — Производственная служба грозозащиты и изоляции" width="791" height="290">
     </section>
+    <section class="home-hello"><div><p class="hh-day">${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS_GEN[d.getMonth()]} ${d.getFullYear()}</p>
+      <h2>${hello}!</h2>
+      <details class="home-calendar"><summary>Календарь</summary><input aria-label="Календарь" type="date" value="${today()}"></details></div>
+      <div id="homeW">${weatherHTML(jget('homeW', null))}</div></section>
+    <div class="dashboard-utilities">
+      <a class="btn ghost" href="#/h/phones">${icon('phone')} Телефонный справочник</a>
+    </div>
+    <nav class="dashboard-grid home-actions" aria-label="Задания">
+      ${link('/b/new', 'clipboard', 'Выдать задание', '', true)}
+      ${link('/e', 'permit', 'Выполнение задания')}
+    </nav>
     <nav class="dashboard-grid home-directories" aria-label="Быстрый доступ">
-      ${link('/' + role + '/new', 'clipboard', isManager(role) ? 'Выдать задание' : 'Новая заявка', isManager(role) ? 'Работа и инструктаж' : 'Работа и протокол', true)}
+      ${link('/e/new', 'clipboard', 'Новая заявка')}
       ${link('/h/people', 'people', 'Бригады и работники')}
       ${link('/h/instructions', 'book', 'Инструкции по охране труда')}
       ${link('/' + role + '/guides', 'bolt', 'Типовые работы')}
       ${link('/' + role, 'permit', 'Мои задания и история')}
       ${link('/' + role + '/monthly', 'meter', 'Отчёты', 'Месячные задания и Excel')}
+      ${link('/' + role + '/docs/info', 'info', 'Информация для ознакомления')}
     </nav>
-    <div class="dashboard-utilities">
-      <a class="btn ghost small" href="#/h/phones">${icon('phone')} Телефонный справочник</a>
-    </div>
-    <section class="home-hello"><div><p class="hh-day">${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS_GEN[d.getMonth()]} ${d.getFullYear()}</p>
-      <h2>${hello}!</h2><p class="hh-sub">Безопасной работы сегодня</p></div>
-      <div id="homeW">${weatherHTML(jget('homeW', null))}</div></section>
     ${bdayBannerHTML()}
     <h3 class="home-h">Войти как</h3>
     <div class="roles2">
@@ -775,6 +796,8 @@ async function viewTask(id, tab, k) {
 // Ставит заявку в очередь отправки и отправляет, если есть связь
 async function submit(t) {
   t.submittedBy = me() || t.assignedElectrician || ''; t.registrationShared = '';
+  t.protocolBlank ||= blank();
+  for (const item of t.items) item.values=protocolValues(t,item.values);
   t.status = 'pending'; t.submittedAt = Date.now();
   await dbPut(t);
   if (isOnline()) {
@@ -895,6 +918,7 @@ function renderForm(box, t, k) {
   if (!t.items.length) { box.innerHTML = '<div class="card meta">В заявке нет испытаний. Нажмите «Изменить», чтобы добавить.</div>'; return; }
   k = Math.min(Math.max(0, k), t.items.length - 1);
   const it = t.items[k], wt = WORK_TYPES[it.type], v = it.values;
+  Object.assign(v,protocolValues(t,v));
   currentFormId = t.id;
   const ro = t.status === 'pending' || t.status === 'sent';
   const n = t.items.length;
@@ -1086,8 +1110,8 @@ function renderForm(box, t, k) {
       const btn = e.target.closest('[data-weather]');
       btn.disabled = true; btn.textContent = 'Определяем место и погоду…';
       try {
-        const w = await fetchWeather();
-        for (const [id, val] of Object.entries(w.values)) setVal(id, val);
+        const w = await protocolWeather(t,v);
+        for (const [id, val] of Object.entries(w.values)) if (!String(v[id]??'').trim()) setVal(id, val);
         redrawSecOf('temp_air'); refresh();
         toast(`Погода заполнена${w.place ? ': ' + w.place : ''}`);
       } catch (err) {
@@ -1097,10 +1121,11 @@ function renderForm(box, t, k) {
     }
   });
 
-  if (['temp_air','humidity','pressure'].some(id=>!String(v[id]??'').trim()) && !autoWeatherDone.has(t.id + '|' + k)) {
+  if ((v.proto_date||t.date)===today() && ['temp_air','humidity','pressure'].some(id=>!String(v[id]??'').trim()) && !autoWeatherDone.has(t.id + '|' + k)) {
     autoWeatherDone.add(t.id + '|' + k);
-    fetchWeather(true).then(w => {
-      if (currentFormId !== t.id || !box.isConnected) return;
+    const heading=box.querySelector('.proto-head');
+    protocolWeather(t,v).then(w => {
+      if (currentFormId !== t.id || !heading?.isConnected) { autoWeatherDone.delete(t.id + '|' + k); return; }
       for (const [id, val] of Object.entries(w.values)) if (!String(v[id]??'').trim()) setVal(id, val);
       redrawSecOf('temp_air'); refresh();
       const status=box.querySelector('[data-weather-status]');if(status)status.textContent='Условия погоды заполнены автоматически.';
@@ -1157,11 +1182,15 @@ function renderForm(box, t, k) {
 const autoWeatherDone = new Set();
 // Погода: место по телефону, а если не получилось — по населённому пункту (запоминается). Сервис Open-Meteo работает в России без VPN.
 const GEO_ERR = { 1: 'сайту запрещён доступ к местоположению (разрешите в браузере: значок замка у адреса → Местоположение)', 2: 'телефон не смог определить место', 3: 'телефон долго определял место' };
-const getPos = () => new Promise((res, rej) => {
-  if (!navigator.geolocation) return rej(new Error('нет геолокации'));
-  const timer=setTimeout(()=>rej(new Error(GEO_ERR[3]+'. Проверь геолокацию телефона и разрешение Chrome.')),26000);
-  navigator.geolocation.getCurrentPosition(p => {clearTimeout(timer);res(p.coords);}, e => {clearTimeout(timer);rej(new Error(GEO_ERR[e.code] || 'место не определено'));}, { timeout: 25000, maximumAge: 300000, enableHighAccuracy: false });
-});
+async function getPos() {
+  if (!navigator.geolocation) throw new Error('Геолокация недоступна. Откройте приложение по защищённой ссылке.');
+  const permission=await navigator.permissions?.query({name:'geolocation'}).catch(()=>null);
+  if (permission?.state==='denied') throw new Error(GEO_ERR[1]);
+  return new Promise((res, rej) => {
+    const timer=setTimeout(()=>rej(new Error(GEO_ERR[3]+'. Проверь геолокацию телефона и разрешение Chrome.')),26000);
+    navigator.geolocation.getCurrentPosition(p => {clearTimeout(timer);res(p.coords);}, e => {clearTimeout(timer);rej(new Error(GEO_ERR[e.code] || 'место не определено'));}, { timeout: 25000, maximumAge: 300000, enableHighAccuracy: false });
+  });
+}
 // Своё окошко для ввода города (системное окно на некоторых телефонах не появляется)
 // Своё окошко ввода текста: вернёт строку или null (Отмена)
 function askText(title, msg = '', value = '', placeholder = '') {
@@ -1191,9 +1220,25 @@ async function cityCoords(askAgain,quiet,msg) {
   lsSet('weatherCity',city);
   const c={latitude:p.latitude,longitude:p.longitude,place:p.name,city};lsSet('weatherLocation',JSON.stringify(c));return c;
 }
-async function fetchWeather(quiet) {
-  const w=await homeWeather(quiet?undefined:'refresh');
-  if(!w||!['t','pressure','humidity'].every(k=>Number.isFinite(w[k]))||Date.now()-w.at>30*60e3)throw new Error('Свежая погода недоступна. Обнови её на главном экране или введи условия вручную.');
+const protocolConditionFields=[['temp_air','Температура воздуха, °C'],['humidity','Влажность, %'],['pressure','Давление, мм рт. ст.']];
+function protocolValues(task, values) {
+  const result={...values};
+  if (!String(result.place??'').trim()) result.place=task.testPlace||task.address||task.object||'';
+  for (const [key] of protocolConditionFields) {
+    if (!String(result[key]??'').trim()&&String(task[key]??'').trim()) result[key]=String(task[key]);
+  }
+  return result;
+}
+async function protocolWeather(task, values) {
+  if ((values.proto_date||task.date)!==today()) throw new Error('Для другой даты внесите условия испытаний из заявки или журнала измерений.');
+  const site=kusty().find(s=>s.id===(values.kust_id||task.siteId));
+  const point=[
+    [values.latitude,values.longitude],
+    [task.location?.latitude,task.location?.longitude],
+    [site?.lat,site?.lon]
+  ].find(([lat,lon])=>[lat,lon].every(n=>n!=null&&String(n).trim()!=='')&&validWeatherLocation({latitude:Number(lat),longitude:Number(lon)}));
+  if (!point) throw new Error('Укажите координаты объекта или введите условия испытаний вручную.');
+  const w=await weatherAtLocation({latitude:Number(point[0]),longitude:Number(point[1]),place:protocolValues(task,values).place});
   return {place:w.place,values:{temp_air:String(w.t),humidity:String(w.humidity),pressure:String(w.pressure)}};
 }
 
@@ -1245,6 +1290,8 @@ async function viewEdit(role, id) {
     <div class="gap"></div>
     <label class="field"><span class="lbl">Объект <b class="req">*</b></span><input name="object" value="${esc(t.object)}" autocomplete="off" placeholder="Начните вводить — появятся подсказки"></label>
     <label class="field"><span class="lbl">Адрес</span><input name="address" value="${esc(t.address)}" autocomplete="off"></label>
+    <label class="field"><span class="lbl">Место проведения испытаний</span><input name="testPlace" value="${esc(t.testPlace||'')}" placeholder="По умолчанию адрес или объект"></label>
+    <div class="row" style="--n:3">${protocolConditionFields.map(([key,label])=>`<label class="field"><span class="lbl">${label}</span><input type="number" name="${key}" step="any" ${key==='humidity'?'min="0" max="100"':key==='pressure'?'min="0"':''} value="${esc(t[key]??'')}"></label>`).join('')}</div>
     <label class="field"><span class="lbl">Оборудование</span><input name="equipment" value="${esc(t.equipment)}" autocomplete="off"></label>
     <label class="field"><span class="lbl">Дата</span><input type="date" name="date" value="${esc(t.date)}"></label>
     <h3 class="mt">Исполнители</h3>
@@ -1470,6 +1517,7 @@ async function viewEdit(role, id) {
     const saved = {
       ...(latest || old || { id: 't' + Date.now(), number: nextNo, created: Date.now(), status: 'new', briefing: { checked: [] } }),
       object: fd.object.trim(), address: fd.address.trim(), equipment: fd.equipment.trim(), date: fd.date, comment: fd.comment.trim(),
+      testPlace: fd.testPlace.trim(), ...Object.fromEntries(protocolConditionFields.map(([key])=>[key,fd[key]])),
       items: goodItems, crew, devices: [...devSel], devAuto, siteId: fd.siteId || ''
     };
     saved.complex = $('#workComplex').value;
@@ -1504,7 +1552,7 @@ async function viewEdit(role, id) {
     if(draftClosed)return;
     const form=$('#ef');if(!form)return;
     const fields=Object.fromEntries(new FormData(form));
-    if(!items.some(item=>item.type)&&![fields.object,fields.address,fields.equipment,fields.comment].some(Boolean)&&!crew.members.some(Boolean)&&!crew.respHead&&!crew.foreman&&!selectedSafety().length&&!editDraft&&!lastDraft)return;
+    if(!items.some(item=>item.type)&&![fields.object,fields.address,fields.equipment,fields.comment,fields.testPlace,...protocolConditionFields.map(([key])=>fields[key])].some(Boolean)&&!crew.members.some(Boolean)&&!crew.respHead&&!crew.foreman&&!selectedSafety().length&&!editDraft&&!lastDraft)return;
     const snapshot={id:draftKey,role,owner:me()||'',taskId:id||null,form:fields,items:structuredClone(items),crew:structuredClone(crew),devices:[...devSel],devAuto,complex:$('#workComplex').value,safetyIds:selectedSafety()};
     const serialized=JSON.stringify(snapshot);if(serialized===lastDraft)return;lastDraft=serialized;
     const status=$('#editorDraftStatus');if(status)status.textContent='Сохраняем черновик…';
@@ -1691,7 +1739,7 @@ function normText(sec, v, r) {
   return [...out].slice(0, 3).join('; ');
 }
 function paperHTML(t, it, k) {
-  const b = blank(), wt = WORK_TYPES[it.type], v = it.values, r = wt.check(v);
+  const b = t.protocolBlank || blank(), wt = WORK_TYPES[it.type], v = protocolValues(t,it.values), r = wt.check(v);
   const N = typeof NORMS !== 'undefined' ? NORMS[wt.code] : null;
   // Пункт НД: по выбранному виду испытаний; если вид не выбран — оба документа
   const ndRef = sec => {
@@ -1703,13 +1751,17 @@ function paperHTML(t, it, k) {
   const secs = wt.form.filter(sec => sec.ref && secVisible(sec, v));
   const ndRows = secs.map(sec => [sec.title.replace(/^\d+\.\s*/, ''), ndRef(sec), ndVal(sec)]);
   // Результаты — те же строки, что в кратком отчёте
-  const results = protocolHTML(it, k, t.items.length, true);
+  const results = protocolHTML({...it,values:v}, k, t.items.length, true);
   const devs = rowsOf(v, 'devices');
   const recs = paperDevices || [];
   const devRows = devs.map(x => { const d = recs.find(d => devLabel(d) === x.name) || {};
     return [d.name || x.name, d.no || '', d.range || '', d.acc || '', d.cert || '', [d.date && fmtDate(d.date), d.next && fmtDate(d.next)].filter(Boolean).join(' / ')]; });
   const people = crewNames(t);
-  const climate = [v.temp_air && `температура воздуха ${v.temp_air} °C`, v.humidity && `влажность ${v.humidity} %`, v.pressure && `давление ${v.pressure} мм рт. ст.`].filter(Boolean).join(', ');
+  const climate = [
+    ['temp_air','температура воздуха','°C'],
+    ['humidity','влажность','%'],
+    ['pressure','давление','мм рт. ст.']
+  ].filter(([key])=>String(v[key]??'').trim()).map(([key,label,unit])=>`${label} ${v[key]} ${unit}`).join(', ');
   const eq = [v.tr_type, v.m_type, v.vb_type, v.cab_mark, v.eq_type].find(Boolean) || '';
   const reasons = reasonsOf(wt, v, r);
   return `<div class="paper">
@@ -2117,7 +2169,7 @@ function routeCore() {
   viewRoles();
 }
 
-const PSGI_SW_VERSION = '25.10';
+const PSGI_SW_VERSION = '25.11';
 
 async function startApp() {
   const splashVisible = $('#launchSplash')?.hidden === false;

@@ -6,7 +6,7 @@ function applyTaskLocation(task,coords,replace=false) {
   if(!Number.isFinite(coords.latitude)||!Number.isFinite(coords.longitude))throw new Error('Телефон не вернул координаты.');
   const location={latitude:coords.latitude,longitude:coords.longitude,accuracy:Number.isFinite(coords.accuracy)?coords.accuracy:null,at:Date.now()};
   task.location=location;
-  for(const item of task.items){item.values ||= {};const v=item.values;if(!replace&&v.locationOverride&&v.latitude&&v.longitude)continue;v.latitude=String(coords.latitude);v.longitude=String(coords.longitude);if(replace)delete v.locationOverride;if(task.siteId&&!v.kust_id)v.kust_id=task.siteId;}
+  for(const item of task.items){item.values ||= {};const v=item.values;if(!replace&&v.locationOverride&&v.latitude&&v.longitude)continue;v.latitude=String(coords.latitude);v.longitude=String(coords.longitude);v.locationAccuracy=location.accuracy;if(replace)delete v.locationOverride;if(task.siteId&&!v.kust_id)v.kust_id=task.siteId;}
   return task;
 }
 async function bindTaskPosition(id) {
@@ -16,7 +16,7 @@ async function bindTaskPosition(id) {
   if(!replace)for(const item of conflicts)item.values.locationOverride='1';
   applyTaskLocation(task,coords,replace);
   if(task.siteId){const sites=kusty(),site=sites.find(s=>s.id===task.siteId);if(site){site.lat=coords.latitude;site.lon=coords.longitude;saveKusty(sites);}}
-  await dbPut(task);lsSet('weatherLocation',JSON.stringify({latitude:coords.latitude,longitude:coords.longitude,place:task.object||'Место заявки',city:''}));
+  await dbPut(task);
   return task;
 }
 async function createSite() {
@@ -48,7 +48,7 @@ enhancePage=async function(role,parts) {
     const summary=app.querySelector('.task-summary');if(!summary)return;
     const panel=document.createElement('section');panel.className='task-location no-print';
     const canEdit=isManager(role)||canManageWorkerTask(task,me());
-    panel.innerHTML=`<p class="meta">Общая точка заявки: ${task.location?`${esc(task.location.latitude.toFixed(5))}, ${esc(task.location.longitude.toFixed(5))}${task.location.accuracy!==null?' · точность около '+Math.round(task.location.accuracy)+' м':''}`:'ещё не привязана'}</p>${canEdit?`<label class="field"><span class="lbl">Куст / подстанция для всех испытаний</span><select data-task-site>${taskSiteOptions(task.siteId)}</select></label><div class="actions"><button type="button" class="btn ghost small" data-site-add>Новый куст / подстанция</button><button type="button" class="btn accent small" data-task-position>Где я нахожусь?</button></div><p class="hint" data-position-status>Координаты заявки наследуют все испытания комплекса.</p>`:''}`;
+    panel.innerHTML=`<p class="meta">Общая точка заявки: ${positionHTML(task.location?.latitude,task.location?.longitude,task.location?.accuracy)||'ещё не привязана'}</p>${canEdit?`<label class="field"><span class="lbl">Куст / подстанция для всех испытаний</span><select data-task-site>${taskSiteOptions(task.siteId)}</select></label><div class="actions"><button type="button" class="btn ghost small" data-site-add>Новый куст / подстанция</button><button type="button" class="btn accent small" data-task-position>Где я нахожусь?</button></div><p class="hint" data-position-status>Координаты заявки наследуют все испытания комплекса.</p>`:''}`;
     const actions=summary.querySelector('.actions');if(actions)actions.before(panel);else summary.append(panel);
     if(!canEdit)return;
     const select=panel.querySelector('[data-task-site]');

@@ -465,6 +465,7 @@ const TRANSFORMER = {
       { id: 'uk', label: 'Напряжение короткого замыкания Uк', type: 'number', unit: '%' },
       { id: 'scheme', label: 'Схема и группа соединения', type: 'select', options: ['Y/Yн-0', 'Д/Yн-11', 'Y/Д-11', 'Y/Zн-11'] },
       { id: 'reg_type', label: 'Способ регулирования напряжения', type: 'select', options: ['ПБВ', 'РПН'] },
+      { id: 'tap_position', label: 'Положение ПБВ / РПН', type: 'text', hint: 'Укажите фактическое положение по маркировке трансформатора.' },
       { id: 'reg_range', label: 'Пределы регулирования', type: 'text', hint: 'Например: ±2×2,5 % или ±9×1,78 %' }
     ]},
     genericItem(1, T_ITEMS[0]),

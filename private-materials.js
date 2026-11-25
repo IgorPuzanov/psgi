@@ -4,6 +4,13 @@ const MATERIAL_PATHS = [
   'instructions/iotv-10-2024-original.pdf',
 ];
 const isLocalMaterialsHost = () => ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
+const instructionTextURL = id => new URL('instructions/instruction_'+id+'.txt',document.baseURI).href;
+async function privateInstructionText(id) {
+  if (!/^0[1-8]$/.test(id)||!('caches' in window)) return '';
+  const cache=await caches.open(PRIVATE_MATERIALS_CACHE);
+  const response=await cache.match(instructionTextURL(id));
+  return response ? response.text() : '';
+}
 
 async function loadLocalPhoneDirectory() {
   if (!isLocalMaterialsHost() || lsGet('phoneSource20261123')) return;
@@ -22,7 +29,7 @@ async function importPrivateMaterials(file) {
   if (file.size <= headerSize || file.size > 128 * 1024 * 1024) throw new Error('Не удалось прочитать файл материалов ПСГИ.');
   const prefix = new DataView(await file.slice(0, headerSize).arrayBuffer());
   const length = prefix.getUint32(4, true);
-  if (prefix.getUint32(0, true) !== 0x50475350 || !length || length > 256 * 1024) {
+  if (prefix.getUint32(0, true) !== 0x50475350 || !length || length > 2 * 1024 * 1024 || length>file.size-headerSize) {
     throw new Error('Выбери файл материалов ПСГИ (.psgimat).');
   }
   const header = JSON.parse(await file.slice(headerSize, headerSize + length).text());
@@ -33,6 +40,10 @@ async function importPrivateMaterials(file) {
     throw new Error('Структура файла материалов не совпадает с версией приложения.');
   }
   const people = header.staff === undefined ? [] : parseStaffList(header.staff);
+  const texts=header.instructionTexts ? Object.entries(header.instructionTexts) : [];
+  if (texts.some(([id,value])=>!/^0[1-8]$/.test(id)||typeof value!=='string'||!value.trim())) {
+    throw new Error('Некорректный текст инструкции в файле материалов.');
+  }
   let position = headerSize + length;
   if (position + header.files.reduce((total, item) => total + item.size, 0) !== file.size) {
     throw new Error('Файл материалов неполный. Скачай его заново.');
@@ -52,6 +63,9 @@ async function importPrivateMaterials(file) {
       'Content-Type': 'application/pdf',
       'Content-Length': String(pdf.size),
     } }));
+  }
+  for (const [id,value] of texts) {
+    await materialCache.put(instructionTextURL(id),new Response(value,{headers:{'Content-Type':'text/plain; charset=utf-8'}}));
   }
   seedPhoneDirectory(header.contacts);
   if (people.length) saveStaffList(people, { fillOnly: true });

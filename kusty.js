@@ -88,7 +88,7 @@ function viewPeople(role) {
     ${staff.map(n => `<div class="card person-c"><div class="pc-top"><b>${esc(n)}</b><button type="button" class="del-x sm" data-pdel="${esc(n)}" aria-label="Удалить">${icon('trash')}</button></div>
       <div class="pc-row"><label class="field"><span class="lbl">Должность</span><select data-pos="${esc(n)}"><option value="">—</option>${[...new Set([...POSITIONS, staffPos(n)].filter(Boolean))].map(p => `<option ${p === staffPos(n) ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></label>
       <label class="field"><span class="lbl">День рождения</span><input type="date" data-bd="${esc(n)}" value="${esc(bd[n] || '')}"></label></div>
-      <div class="pc-row"><label class="field"><span class="lbl">Телефон</span><input type="tel" data-phone="${esc(n)}" value="${esc(staffContacts()[n]?.phone||'')}"></label><label class="field"><span class="lbl">Табельный номер</span><input data-personnel="${esc(n)}" value="${esc(staffContacts()[n]?.personnel||'')}" autocomplete="off"></label></div>${staffContacts()[n]?.phone?`<a class="btn ghost small" href="tel:${esc(staffContacts()[n].phone.replace(/[^+\d]/g,''))}">Позвонить</a>`:''}
+      <div class="pc-row"><label class="field"><span class="lbl">Сотовый телефон</span><input type="tel" data-phone="${esc(n)}" value="${esc(staffContacts()[n]?.phone||'')}"></label><label class="field"><span class="lbl">Табельный номер</span><input data-personnel="${esc(n)}" value="${esc(staffContacts()[n]?.personnel||'')}" autocomplete="off"></label></div>${staffContacts()[n]?.phone?`<a class="btn ghost small" href="tel:${esc(staffContacts()[n].phone.replace(/[^+\d]/g,''))}">Позвонить</a>`:''}
       ${bd[n] && daysToBday(bd[n]) === 0 ? '<p class="bday-today">🎉 Сегодня день рождения!</p>' : ''}</div>`).join('') || '<div class="card meta">Список пуст.</div>'}
     <button class="btn accent" id="pAdd">+ Добавить человека</button>
     <label class="btn ghost file-btn mt">Загрузить список работников<input id="staffImport" type="file" accept=".json,application/json"></label>`;
@@ -304,14 +304,20 @@ function viewPhones(role) {
   app.innerHTML = `<div class="card directory-intro"><h2>Телефонный справочник</h2>
     <label class="field"><span class="lbl">Поиск по ФИО, должности, месту или номеру</span><input id="pq" type="search" value="${esc(phoneQ)}" autocomplete="off"></label></div>
     ${!isLocalMaterialsHost() || !all.length ? privateMaterialsLink(role) : ''}
-    <p class="meta ph-count" id="pc"></p><div id="pl"></div>
+    <div id="phoneStaff"></div><p class="meta ph-count" id="pc"></p><div id="pl"></div>
     <p class="meta">В справочник добавлены читаемые записи из переданных снимков. Неразборчивые и спорные строки требуют ручной сверки.</p>
     <div class="actions mt"><a class="btn accent small" href="#/${role}/phone/new">+ Добавить</a><a class="btn ghost small" href="#/${role}/phoneimport">Загрузить список</a></div>`;
   const draw = () => {
     const normalize = text => text.toLowerCase().replaceAll('ё', 'е');
     const q = normalize(phoneQ.trim()), qd = q.replace(/\D/g, '');
-    const list = all.filter(c => !q || normalize([c.name, c.pos, c.dep, c.place, c.note].join(' ')).includes(q) ||
-      (qd.length > 2 && [...(c.phones || []), c.tetra || ''].some(p => p.replace(/\D/g, '').includes(qd))))
+    const matches=(text,numbers)=>!q||normalize(text).includes(q)||(qd.length>2&&numbers.some(p=>p.replace(/\D/g,'').includes(qd)));
+    const staffPhones=staffContacts();
+    const staff=getStaff().filter(name=>matches([name,staffPos(name),'ПСГИ'].join(' '),[staffPhones[name]?.phone||'']));
+    $('#phoneStaff').innerHTML=`<details class="card phone-group" ${q&&staff.length?'open':''}><summary>ПСГИ · ${staff.length}</summary>
+      ${staff.map(name=>`<div class="staff-directory-row"><div><strong>${esc(name)}</strong><small>${esc(staffPos(name))}</small></div>
+        <label class="field"><span class="lbl">Сотовый телефон</span><input type="tel" data-staff-mobile="${esc(name)}" value="${esc(staffPhones[name]?.phone||'')}"></label></div>`).join('')||'<p class="meta">Сотрудники не найдены.</p>'}
+      <a class="btn ghost small" href="#/${role}/people">Карточки работников</a></details>`;
+    const list = all.filter(c => matches([c.name,c.pos,c.dep,c.place,c.note].join(' '),[...(c.phones||[]),c.tetra||'',c.mobile||'']))
       .sort((a, b) => q ? (+!a.name.toLowerCase().startsWith(q)) - (+!b.name.toLowerCase().startsWith(q)) : 0);
     $('#pc').textContent = all.length ? `Контактов: ${list.length}${q ? ' из ' + all.length : ''}` : '';
     const groups = new Map();
@@ -323,13 +329,22 @@ function viewPhones(role) {
     const renderContact = c => `<article class="card ph-c"><a class="task" href="#/${role}/phone/${esc(c.id)}"><div class="obj">${esc(c.name)}</div>
       ${c.pos ? `<p class="meta">${esc(c.pos)}</p>` : ''}</a>
       ${c.place ? `<p class="meta">Место установки: ${esc(c.place)}</p>` : ''}
-      <div class="ph-nums">${(c.phones || []).map(p => `<a class="ph-num" href="${telHref(p)}">${esc(p)}</a>`).join('')}</div>
+      <div class="ph-nums">${(c.phones || []).map(p => `<a class="ph-num" href="${telHref(p)}">${esc(p)}</a>`).join('')}${c.mobile?`<a class="ph-num" href="${telHref(c.mobile)}">Сотовый: ${esc(c.mobile)}</a>`:''}</div>
       ${c.tetra ? `<p class="meta">Тетра: ${esc(c.tetra)}</p>` : ''}</article>`;
-    $('#pl').innerHTML = [...groups].map(([group, contacts]) =>
-      `<section class="phone-group"><h3>${esc(group)}</h3>${contacts.map(renderContact).join('')}</section>`).join('') ||
+    const sections=[['Сетевые районы', /район|\bрэс\b/i],['Службы и подразделения', null]];
+    $('#pl').innerHTML = sections.map(([title,pattern])=>{
+      const section=[...groups].filter(([group])=>pattern?pattern.test(group):!sections[0][1].test(group));
+      if (!section.length) return '';
+      return `<section aria-label="${title}"><h3>${title}</h3>${section.map(([group, contacts]) =>
+        `<details class="card phone-group" ${q?'open':''}><summary>${esc(group)} · ${contacts.length}</summary>${contacts.map(renderContact).join('')}</details>`).join('')}</section>`;
+    }).join('') ||
       `<div class="card meta">${all.length ? 'Никого не нашли.' : 'Справочник пуст. Добавьте контакты по одному или загрузите списком.'}</div>`;
   };
   draw();
+  $('#phoneStaff').addEventListener('input',event=>{
+    const name=event.target.dataset.staffMobile;
+    if (name) saveStaffContact(name,'phone',event.target.value.trim());
+  });
   $('#pq').oninput = e => { phoneQ = e.target.value; draw(); };
 }
 function viewPhone(role, id) {
@@ -343,6 +358,7 @@ function viewPhone(role, id) {
     <label class="field"><span class="lbl">Подразделение, организация</span><input name="dep" value="${esc(c.dep || '')}" autocomplete="off"></label>
     <label class="field"><span class="lbl">Место установки телефона</span><input name="place" value="${esc(c.place || '')}" autocomplete="off"></label>
     <label class="field"><span class="lbl">Телефоны (каждый с новой строки)</span><textarea name="phones" rows="3" inputmode="tel">${esc((c.phones || []).join('\n'))}</textarea></label>
+    <label class="field"><span class="lbl">Сотовый телефон</span><input type="tel" name="mobile" value="${esc(c.mobile||'')}"></label>
     <label class="field"><span class="lbl">Тетра</span><input name="tetra" value="${esc(c.tetra || '')}" autocomplete="off"></label>
     <label class="field"><span class="lbl">Примечание</span><input name="note" value="${esc(c.note || '')}" autocomplete="off"></label>
     <button class="btn accent" type="submit">Сохранить</button>
@@ -351,7 +367,7 @@ function viewPhone(role, id) {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(e.target));
     if (!fd.name.trim()) { toast('Укажите ФИО'); return; }
-    const nc = { ...c, id: c.id || 'c' + Date.now(), name: fd.name.trim(), pos: fd.pos.trim(), dep: fd.dep.trim(), place: fd.place.trim(), tetra: fd.tetra.trim(), note: fd.note.trim(), phones: fd.phones.split(/\r?\n|,/).map(x => x.trim()).filter(Boolean) };
+    const nc = { ...c, id: c.id || 'c' + Date.now(), name: fd.name.trim(), pos: fd.pos.trim(), dep: fd.dep.trim(), place: fd.place.trim(), tetra: fd.tetra.trim(), mobile: fd.mobile.trim(), note: fd.note.trim(), phones: fd.phones.split(/\r?\n|,/).map(x => x.trim()).filter(Boolean) };
     savePhones([...phones().filter(x => x.id !== nc.id), nc]); toast('Контакт сохранён'); location.hash = `/${role}/phones`;
   };
   const del = $('#cDel');

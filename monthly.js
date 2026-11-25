@@ -2,6 +2,7 @@
 
 const MONTHLY_KIND='monthly_assignment';
 const MONTHLY_FORMAT='psgi-monthly-assignment';
+const MONTHLY_LIMITS={permit:3,travel:7};
 const monthlyNumber=value=>value===null||value===undefined||String(value).trim()===''?null:Number(String(value).trim().replace(/\s/g,'').replace(',','.'));
 const monthlyMonth=month=>new Date(month+'-02T12:00:00').toLocaleDateString('ru-RU',{month:'long',year:'numeric'}).replace(' г.','');
 const monthlyFmt=(value,digits=3)=>value===null||!Number.isFinite(value)?'—':value.toLocaleString('ru-RU',{minimumFractionDigits:digits,maximumFractionDigits:digits});
@@ -16,8 +17,18 @@ function monthlyRowResult(row) {
 function monthlyTotals(report) {
   const rows=report.rows.map(monthlyRowResult),total=key=>rows.length&&rows.every(r=>r[key]!==null)?rows.reduce((sum,row)=>sum+row[key],0):null;
   const planned=total('planned'),earned=total('earned'),actual=total('actualHours'),hours=monthlyNumber(report.actualWorkedHours);
-  const share=category=>actual!==null&&actual>0?report.rows.reduce((sum,row,index)=>sum+(row.category===category?rows[index].actualHours:0),0)/actual*100:null;
-  return {planned,earned,actual,percent:earned!==null&&hours!==null&&hours>0?earned/hours*100:null,permitShare:share('permit'),travelShare:share('travel'),planToEarned:planned!==null&&earned>0?planned/earned*100:null,missing:rows.filter(r=>r.planned===null||r.earned===null||r.actualHours===null).length};
+  const fund=monthlyNumber(report.monthlyFundHours);
+  const categoryHours=category=>{
+    const selected=rows.filter((_,index)=>report.rows[index].category===category);
+    return selected.every(row=>row.actualHours!==null)?selected.reduce((sum,row)=>sum+row.actualHours,0):null;
+  };
+  const permitHours=categoryHours('permit'),travelHours=categoryHours('travel');
+  const share=value=>value!==null&&Number.isFinite(fund)&&fund>0?value/fund*100:null;
+  const permitShare=share(permitHours),travelShare=share(travelHours);
+  return {planned,earned,actual,permitHours,travelHours,permitShare,travelShare,
+    difference:actual!==null&&Number.isFinite(hours)?hours-actual:null,
+    percent:earned!==null&&hours!==null&&hours>0?earned/hours*100:null,
+    planToEarned:planned!==null&&earned>0?planned/earned*100:null,missing:rows.filter(r=>r.planned===null||r.earned===null||r.actualHours===null).length};
 }
 function normalizeMonthly(raw) {
   if(raw.format!==MONTHLY_FORMAT||raw.version!==1||!/^\d{4}-(0[1-9]|1[0-2])$/.test(raw.month)||!Array.isArray(raw.rows)||raw.rows.length>500)throw new Error('Нужен файл данных нормированного задания ПСГИ (.psgi.json).');
@@ -33,6 +44,8 @@ function normalizeMonthly(raw) {
   });
   report.actualWorkedHours=monthlyNumber(report.actualWorkedHours);
   if(report.actualWorkedHours!==null&&(!Number.isFinite(report.actualWorkedHours)||report.actualWorkedHours<0))throw new Error('Проверь фактически отработанные часы.');
+  report.monthlyFundHours=monthlyNumber(report.monthlyFundHours);
+  if(report.monthlyFundHours!==null&&(!Number.isFinite(report.monthlyFundHours)||report.monthlyFundHours<0))throw new Error('Проверь месячный фонд часов.');
   return report;
 }
 function monthlyNewRow(number=1) {
@@ -71,14 +84,23 @@ function monthlyWorkbookModel(report) {
   set(foot+2,2,'Отношение задания к выполнению, % (графа 7 / графа 9 × 100)');merge(foot+2,2,foot+2,7);set(foot+2,9,totals.planToEarned,2,`IF(OR(H${total}="",J${total}="",J${total}=0),"",H${total}/J${total}*100)`);heights[foot+2]=32;
   set(foot+3,2,'Работу сдал: '+(report.workerPosition||'')+' '+(report.worker||''));merge(foot+3,2,foot+3,7);heights[foot+3]=34;
   set(foot+3,9,'Работу принял: '+(report.foreman||''));merge(foot+3,9,foot+3,11);
-  set(foot+4,2,'Доля допуска в фактической трудоёмкости, %');merge(foot+4,2,foot+4,7);
-  set(foot+5,2,'Доля транспорта в фактической трудоёмкости, %');merge(foot+5,2,foot+5,7);
-  for(const [category,offset,key]of [['permit',4,'permitShare'],['travel',5,'travelShare']]){const indices=report.rows.flatMap((row,index)=>row.category===category?[21+index]:[]);const numerator=indices.length?indices.map(r=>'K'+r).join('+'):'0';set(foot+offset,9,totals[key],2,`IF(OR(K${total}="",K${total}=0),"",(${numerator})/K${total}*100)`);}
+  const fundRow=foot+6, differenceRow=foot+7;
+  set(fundRow,2,'Месячный фонд часов, чел.ч');merge(fundRow,2,fundRow,7);set(fundRow,9,report.monthlyFundHours,5);
+  set(differenceRow,2,'Отработанные часы минус расчётная трудоёмкость, чел.ч');merge(differenceRow,2,differenceRow,7);
+  set(differenceRow,9,totals.difference,2,`IF(OR(I${foot}="",K${total}=""),"",I${foot}-K${total})`);
+  for(const [category,offset,label] of [['permit',4,'Допуск'],['travel',5,'Транспорт']]){
+    const refs=report.rows.flatMap((row,index)=>row.category===category?['K'+(21+index)]:[]);
+    const formula=refs.length?`IF(COUNT(${refs.join(',')})=${refs.length},SUM(${refs.join(',')}),"")`:'0';
+    const row=foot+offset;
+    set(row,2,`${label}, чел.ч и % от месячного фонда (до ${MONTHLY_LIMITS[category]}%)`);merge(row,2,row,7);
+    set(row,8,totals[category+'Hours'],2,formula);
+    set(row,9,totals[category+'Share'],2,`IF(OR(I${fundRow}="",I${fundRow}=0,H${row}=""),"",H${row}/I${fundRow}*100)`);
+  }
   const notes=[report.sourceNote||''];
   if(report.photoTotals)notes.push(`Контрольные итоги на фото: графа 7 — ${report.photoTotals.planned}; графа 9 — ${report.photoTotals.earned}; графа 10 — ${report.photoTotals.actual}. По видимым нормам графа 9 пересчитывается в ${monthlyFmt(totals.earned)}. Скрытая точность исходного Excel не известна.`);
   if(report.sourceFiles?.length)notes.push('Источник: фотографии '+report.sourceFiles[0]+' — '+report.sourceFiles.at(-1)+'.');
-  notes.filter(Boolean).forEach((note,index)=>{set(foot+6+index,2,note,8);merge(foot+6+index,2,foot+6+index,11);heights[foot+6+index]=index===0?52:40;});
-  return {cells,merges,heights,end,total,foot,rows:foot+6+notes.length,widths:[6,29,35,29,12,10,13,14,13,15,15,12],name:'НЗ '+report.month};
+  notes.filter(Boolean).forEach((note,index)=>{set(foot+8+index,2,note,8);merge(foot+8+index,2,foot+8+index,11);heights[foot+8+index]=index===0?52:40;});
+  return {cells,merges,heights,end,total,foot,rows:foot+8+notes.length,widths:[6,29,35,29,12,10,13,14,13,15,15,12],name:'НЗ '+report.month};
 }
 
 function monthlyEscapeXML(value) {return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));}
@@ -142,9 +164,9 @@ async function viewMonthly(role,id) {
   const save=()=>{report.updatedAt=Date.now();const version=++saveVersion;const snapshot=structuredClone(report);saving=saving.catch(()=>{}).then(()=>docPut(snapshot));saving.then(()=>{if(version===saveVersion&&$('#monthlyStatus'))$('#monthlyStatus').textContent='Сохранено на устройстве';}).catch(()=>{if($('#monthlyStatus'))$('#monthlyStatus').textContent='Не удалось сохранить. Выгрузи файл задания.';});};
   const input=(row,key)=>numeric.has(key)?`<input data-monthly-row="${esc(row.id)}" data-key="${key}" inputmode="decimal" aria-label="Строка ${esc(row.number)}: ${{plan:'объём задания',norm:'норма времени',actual:'выполненный объём',factor:'коэффициент 0,91–0,97'}[key]}" value="${esc(row[key]??'')}" ${key==='factor'?'title="От 0,91 до 0,97"':''}>`:`<textarea data-monthly-row="${esc(row.id)}" data-key="${key}" aria-label="Строка ${esc(row.number)}: ${esc({number:'номер',source:'источник нормирования',title:'наименование работы',object:'объект',unit:'единица измерения'}[key]||key)}" rows="3">${esc(row[key]||'')}</textarea>`;
   const draw=()=>{
-    app.innerHTML=`<div class="monthly-table-wrap"><table class="monthly-table"><thead><tr><th rowspan="2">№</th><th rowspan="2">Источник нормирования</th><th rowspan="2">Наименование работ</th><th rowspan="2">Объект / оборудование</th><th rowspan="2">Ед. изм.</th><th colspan="3">Задание</th><th colspan="3">Выполнение</th><th rowspan="2">Коэф.</th></tr><tr><th>5. Объём</th><th>6. Норма, чел.ч</th><th>7. Нормативное время, чел.ч</th><th>8. Объём</th><th>9. По норме, чел.ч</th><th>10. Фактическая трудоёмкость, чел.ч</th></tr></thead><tbody>${report.rows.map(row=>`<tr class="${row.additional?'monthly-additional':''}"><td>${input(row,'number')}</td><td>${input(row,'source')}</td><td>${input(row,'title')}</td><td>${input(row,'object')}</td><td>${input(row,'unit')}</td><td>${input(row,'plan')}</td><td>${input(row,'norm')}</td><td data-monthly-result="${esc(row.id)}:planned"></td><td>${input(row,'actual')}</td><td data-monthly-result="${esc(row.id)}:earned"></td><td data-monthly-result="${esc(row.id)}:actualHours"></td><td>${input(row,'factor')}</td></tr>`).join('')}</tbody></table></div>
+    app.innerHTML=`<div class="monthly-table-wrap"><table class="monthly-table"><thead><tr><th rowspan="2">№</th><th rowspan="2">Источник нормирования</th><th rowspan="2">Наименование работ</th><th rowspan="2">Объект / оборудование</th><th rowspan="2">Ед. изм.</th><th colspan="3">Задание</th><th colspan="3">Выполнение</th><th rowspan="2">Коэф.</th></tr><tr><th>5. Объём</th><th>6. Норма, чел.ч</th><th>7. Нормативное время, чел.ч</th><th>8. Объём</th><th>9. По норме, чел.ч</th><th>10. Фактическая трудоёмкость, чел.ч</th></tr></thead><tbody>${report.rows.map(row=>`<tr class="${row.additional?'monthly-additional':''}"><td>${input(row,'number')}</td><td>${input(row,'source')}</td><td>${input(row,'title')}<select data-monthly-row="${esc(row.id)}" data-key="category" aria-label="Категория строки ${esc(row.number)}"><option value="work">Работа</option><option value="permit" ${row.category==='permit'?'selected':''}>Допуск</option><option value="travel" ${row.category==='travel'?'selected':''}>Транспорт</option></select></td><td>${input(row,'object')}</td><td>${input(row,'unit')}</td><td>${input(row,'plan')}</td><td>${input(row,'norm')}</td><td data-monthly-result="${esc(row.id)}:planned"></td><td>${input(row,'actual')}</td><td data-monthly-result="${esc(row.id)}:earned"></td><td data-monthly-result="${esc(row.id)}:actualHours"></td><td>${input(row,'factor')}</td></tr>`).join('')}</tbody></table></div>
 <details class="card mt"><summary>Итоги, реквизиты и выгрузка</summary><section class="card"><h2>Нормированное задание</h2><p>${esc(monthlyMonth(report.month))} · ${esc(report.worker||'Исполнитель не указан')}</p><details><summary>Реквизиты задания</summary>${[['month','Месяц (ГГГГ-ММ)'],['workplace','Вид работ / объект'],['brigade','Бригада'],['foreman','Работу принял'],['worker','Работу сдал'],['workerPosition','Должность исполнителя']].map(([key,label])=>`<label class="field"><span class="lbl">${label}</span><input data-monthly-meta="${key}" value="${esc(report[key]||'')}"></label>`).join('')}</details><div class="actions"><button class="btn accent small" id="monthlyExcel">Скачать Excel</button><button class="btn ghost small" id="monthlyData">Скачать данные</button><button class="btn ghost small" id="monthlyCopy">На другой месяц</button><button class="btn ghost small" id="monthlyAdd">Добавить строку</button></div><p id="monthlyStatus" class="hint" role="status">Сохранено на устройстве</p></section>
-      <section class="card monthly-summary"><div>Задание, чел.ч <b data-monthly-total="planned"></b></div><div>Норма на выполненный объём, чел.ч <b data-monthly-total="earned"></b></div><div>Фактическая трудоёмкость, чел.ч <b data-monthly-total="actual"></b></div><label class="field"><span class="lbl">Фактически отработанное время за месяц, чел.ч</span><input data-monthly-meta="actualWorkedHours" inputmode="decimal" value="${esc(report.actualWorkedHours??'')}"></label><div>Выполнение по трудоёмкости <b data-monthly-total="percent"></b></div><div>Допуск / фактическая трудоёмкость <b data-monthly-total="permitShare"></b></div><div>Транспорт / фактическая трудоёмкость <b data-monthly-total="travelShare"></b></div><p class="hint" id="monthlyMissing"></p></section>
+      <section class="card monthly-summary"><div>Задание, чел.ч <b data-monthly-total="planned"></b></div><div>Норма на выполненный объём, чел.ч <b data-monthly-total="earned"></b></div><div>Фактическая трудоёмкость, чел.ч <b data-monthly-total="actual"></b></div><label class="field"><span class="lbl">Фактически отработанное время за месяц, чел.ч</span><input data-monthly-meta="actualWorkedHours" inputmode="decimal" value="${esc(report.actualWorkedHours??'')}"></label><div>Выполнение по трудоёмкости <b data-monthly-total="percent"></b></div><label class="field"><span class="lbl">Месячный фонд, чел.ч</span><input data-monthly-meta="monthlyFundHours" inputmode="decimal" value="${esc(report.monthlyFundHours??'')}"></label><div>Отработанные часы минус расчётная трудоёмкость <b data-monthly-total="difference"></b></div><div>Допуск, чел.ч <b data-monthly-total="permitHours"></b> · доля фонда <b data-monthly-total="permitShare"></b></div><div>Транспорт, чел.ч <b data-monthly-total="travelHours"></b> · доля фонда <b data-monthly-total="travelShare"></b></div><p class="hint" id="monthlyLimits" role="status"></p><p class="hint" id="monthlyMissing"></p></section>
       <p class="meta">План и факт вводятся вручную. Графы 7 и 9: объём × норма. Графа 10: графа 9 × коэффициент. Коэффициент можно менять от 0,91 до 0,97; подбор под месячные часы пока не выполняется. Таблица прокручивается вбок.</p>
       </details>
       <section class="card mt"><h3>Источник и точность</h3><p class="meta">${esc(report.sourceNote||'Данные вводятся пользователем.')}</p>${report.photoTotals?`<p class="meta">На фото итоги: задание ${monthlyFmt(report.photoTotals.planned,2)}, по норме ${monthlyFmt(report.photoTotals.earned,2)}, фактически ${monthlyFmt(report.photoTotals.actual,2)} чел.ч. Пересчёт ведётся по видимым значениям строк; возможны различия из-за точности исходного файла.</p>`:''}<button class="btn ghost small danger" id="monthlyDelete">Удалить это задание</button></section>`;
@@ -152,12 +174,12 @@ async function viewMonthly(role,id) {
     $('#monthlyExcel').onclick=async()=>{await saving;monthlyDownload(monthlyXlsx(report),'Нормированное задание '+report.month+'.xlsx');};
     $('#monthlyData').onclick=()=>monthlyDownload(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}),'Нормированное задание '+report.month+'.psgi.json');
     $('#monthlyAdd').onclick=()=>{report.rows.push(monthlyNewRow(report.rows.length+1));save();draw();};
-    $('#monthlyCopy').onclick=async()=>{const month=await askText('Новый месяц','Скопируются нормы, строки и план. Выполнение будет обнулено.',report.month,'2026-12');if(!month)return;try{const copy=normalizeMonthly({...structuredClone(report),month,actualWorkedHours:null,photoTotals:undefined,rows:report.rows.map(r=>({...r,id:crypto.randomUUID(),actual:0,photoActualHours:undefined}))});copy.id='monthly-'+crypto.randomUUID();copy.updatedAt=Date.now();await docPut(copy);location.hash=`/${role}/monthly/${copy.id}`;}catch(error){toast(error.message);}};
+    $('#monthlyCopy').onclick=async()=>{const month=await askText('Новый месяц','Скопируются нормы, строки и план. Выполнение будет обнулено.',report.month,'2026-12');if(!month)return;try{const copy=normalizeMonthly({...structuredClone(report),month,actualWorkedHours:null,monthlyFundHours:null,photoTotals:undefined,rows:report.rows.map(r=>({...r,id:crypto.randomUUID(),actual:0,photoActualHours:undefined}))});copy.id='monthly-'+crypto.randomUUID();copy.updatedAt=Date.now();await docPut(copy);location.hash=`/${role}/monthly/${copy.id}`;}catch(error){toast(error.message);}};
     $('#monthlyDelete').onclick=async()=>{if(confirm('Удалить это задание? Сначала сохрани файл данных, если оно ещё понадобится.')){await saving;await docDel(report.id);location.hash=`/${role}/monthly`;}};
     app.oninput=event=>{
       const field=event.target,key=field.dataset.key,rowId=field.dataset.monthlyRow,meta=field.dataset.monthlyMeta;
       if(rowId&&key){const row=report.rows.find(r=>r.id===rowId);if(!row)return;row[key]=numeric.has(key)?monthlyNumber(field.value):field.value;const invalid=numeric.has(key)&&row[key]!==null&&(!Number.isFinite(row[key])||row[key]<0||key==='factor'&&(row[key]<.91||row[key]>.97));field.setAttribute('aria-invalid',String(invalid));}
-      else if(meta){if(meta==='month'&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(field.value)){field.setAttribute('aria-invalid','true');return;}if(meta==='actualWorkedHours'){const value=monthlyNumber(field.value);if(value!==null&&(!Number.isFinite(value)||value<0)){field.setAttribute('aria-invalid','true');return;}report[meta]=value;}else report[meta]=field.value;field.setAttribute('aria-invalid','false');}
+      else if(meta){if(meta==='month'&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(field.value)){field.setAttribute('aria-invalid','true');return;}if(['actualWorkedHours','monthlyFundHours'].includes(meta)){const value=monthlyNumber(field.value);if(value!==null&&(!Number.isFinite(value)||value<0)){field.setAttribute('aria-invalid','true');return;}report[meta]=value;}else report[meta]=field.value;field.setAttribute('aria-invalid','false');}
       else return;
       refresh();$('#monthlyStatus').textContent='Сохраняем…';save();
     };
@@ -165,6 +187,10 @@ async function viewMonthly(role,id) {
   const refresh=()=>{
     const totals=monthlyTotals(report);
     app.querySelectorAll('[data-monthly-total]').forEach(el=>{const key=el.dataset.monthlyTotal,percent=['percent','permitShare','travelShare'].includes(key);el.textContent=monthlyFmt(totals[key],percent?2:3)+(percent&&totals[key]!==null?' %':'');});
+    const limits=$('#monthlyLimits');
+    const exceeded=Object.entries(MONTHLY_LIMITS).filter(([category,limit])=>totals[category+'Share']>limit+1e-9);
+    limits.className=exceeded.length?'banner warn':'hint';
+    limits.textContent=!(report.monthlyFundHours>0)?'Укажите месячный фонд для проверки лимитов.':exceeded.length?exceeded.map(([category,limit])=>`${category==='permit'?'Допуск':'Транспорт'} выше лимита ${limit}%.`).join(' '):'Лимиты фонда: допуск до 3%, транспорт до 7%.';
     const results=new Map(report.rows.map(row=>[row.id,monthlyRowResult(row)]));
     app.querySelectorAll('[data-monthly-result]').forEach(el=>{const split=el.dataset.monthlyResult.lastIndexOf(':'),id=el.dataset.monthlyResult.slice(0,split),key=el.dataset.monthlyResult.slice(split+1);el.textContent=monthlyFmt(results.get(id)?.[key]);});
     const status=$('#monthlyMissing');if(status)status.textContent=totals.missing?`Проверь объёмы, нормы и коэффициенты: не заполнено или некорректно строк — ${totals.missing}.`:'Все строки участвуют в расчёте.';

@@ -119,9 +119,10 @@ function bindSafetyPrint(task) {
 function viewSafetyLibrary(role) {
   header('Инструкции по охране труда', role === 'h' ? '/' : `/${role}/docs/info`);
   app.innerHTML = `<div class="card directory-intro"><h2>Инструкции по охране труда</h2>
-    <p class="meta">Сканы и краткие материалы для инструктажа. Номера и названия сверены по титульным страницам.</p>
+    <p class="meta">Тексты, сканы и краткие инструктажи. Номера и названия сверены по титульным страницам.</p>
     ${isLocalMaterialsHost() ? '' : `<div class="actions">${privateMaterialsLink(role)}</div>`}
     <label class="field"><span class="lbl">Найти по названию или номеру</span><input id="safetySearch" type="search" autocomplete="off"></label></div>
+    <details class="card mt"><summary>Общий краткий инструктаж</summary>${safetyBriefHTML(SAFETY_INSTRUCTIONS)}</details>
     <div id="safetyResults"></div>
     <a class="btn ghost" href="#/e/tb">Правила по охране труда (ПОТЭЭ)</a>`;
   const search = $('#safetySearch');
@@ -131,11 +132,34 @@ function viewSafetyLibrary(role) {
       .map(doc => `<article class="card instruction-card"><p class="meta">${doc.code} · ${doc.pages} стр.</p>
         <h3>${doc.title}</h3><span class="badge ${doc.incomplete ? 'st-not' : 'st-new'}">${doc.incomplete ? 'Неполный комплект' : 'На сверке'}</span>
         ${doc.incomplete ? '<p class="meta">В пакете 15 страниц. Требуется полный экземпляр.</p>' : ''}
+        <details class="mt" data-instruction-text="${doc.id}"><summary>Читать текст инструкции</summary><div data-text-body role="status"></div></details>
         ${safetyScansAvailable() ? `<div class="actions mt"><a class="btn ghost small" href="${safetyPdf(doc.id)}" target="_blank" rel="noopener">Открыть скан PDF</a>
         ${doc.id === '01' ? '<a class="btn ghost small" href="instructions/iotv-10-2024-original.pdf" target="_blank" rel="noopener">Дополнительный скан</a>' : ''}</div>` : ''}
         <details class="mt"><summary>Краткий инструктаж</summary>${safetyBriefHTML([doc])}</details></article>`).join('')
       || '<p class="card meta">По этому запросу ничего не найдено.</p>';
   };
+  $('#safetyResults').addEventListener('toggle',async event=>{
+    const panel=event.target;
+    if (!panel.open||!panel.dataset.instructionText||panel.dataset.loaded) return;
+    const body=panel.querySelector('[data-text-body]');
+    body.textContent='Загружаем текст…';
+    let source;
+    try { source=await privateInstructionText(panel.dataset.instructionText); }
+    catch { body.textContent='Текст временно недоступен. Попробуйте открыть ещё раз.'; return; }
+    if (!source) {
+      body.innerHTML=`<p class="meta">Текст доступен в обновлённом файле рабочих материалов.</p>${privateMaterialsLink(role)}`;
+      return;
+    }
+    const notice=document.createElement('p');
+    notice.className='banner warn';
+    notice.textContent='Распознанный текст проходит сверку. Для применения сверяйтесь с утверждённым экземпляром.';
+    const original=document.createElement('pre');
+    original.className='instruction-text';
+    original.textContent=source;
+    body.removeAttribute('role');
+    body.replaceChildren(notice,original);
+    panel.dataset.loaded='1';
+  },true);
   search.oninput = draw;
   draw();
 }

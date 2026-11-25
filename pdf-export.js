@@ -51,7 +51,7 @@ async function buildProtocolPDF(t) {
     if (value === '' || value == null) return;
     write(`${label}: ${value}`, { size: 9.5, indent: 6, gap: 3 });
   };
-  const b = blank();
+  const b = t.protocolBlank || blank();
   newPage();
   if (t.outcome === 'notdone') {
     write('ПСГИ', { size: 19 });
@@ -60,7 +60,7 @@ async function buildProtocolPDF(t) {
   } else for (const [index, it] of t.items.entries()) {
     if (it.skip) continue;
     if (index && y < 760) newPage();
-    const wt = WORK_TYPES[it.type], v = it.values, result = wt.check(v);
+    const wt = WORK_TYPES[it.type], v = protocolValues(t,it.values), result = wt.check(v);
     write(b.org || 'ПСГИ', { size: 14 });
     if (b.lab) write(b.lab, { size: 10 });
     heading(`ПРОТОКОЛ № ${v.proto_no || 'не зарегистрирован'}`);
@@ -138,8 +138,14 @@ async function shareProtocol(t) {
   document.body.append(modal); modal.showModal();
   let url;
   modal.querySelector('[data-close]').onclick = () => modal.close();
-  modal.onclose = () => { if (url) URL.revokeObjectURL(url); modal.remove(); };
+  modal.onclose = () => { if (url) setTimeout(()=>URL.revokeObjectURL(url),60000); modal.remove(); };
   try {
+    const latest=await dbGet(t.id);
+    if (latest&&!latest.protocolBlank) {
+      latest.protocolBlank=blank();
+      await dbPut(latest);
+    }
+    if (latest) t=latest;
     const file = await buildProtocolPDF(t);
     if (!modal.isConnected) return;
     url = URL.createObjectURL(file);
@@ -147,6 +153,13 @@ async function shareProtocol(t) {
     const canShareFile = !!navigator.share && !!navigator.canShare?.({ files: [file] });
     modal.querySelector('[data-pdf-actions]').innerHTML = `${canShareFile ? '<button class="btn accent" data-send-pdf>Отправить PDF в мессенджер</button>' : '<p class="hint">В этом браузере отправка файлов через системное меню недоступна. Скачайте PDF и прикрепите его в мессенджере.</p>'}<a class="btn ghost mt" data-download>Скачать PDF</a><button class="btn ghost mt" data-confirm-send>PDF уже передан — отметить</button>`;
     const a = modal.querySelector('[data-download]'); a.href = url; a.download = file.name;
+    const preview=document.createElement('a');
+    preview.className='btn ghost mt';
+    preview.href=url;
+    preview.target='_blank';
+    preview.rel='noopener';
+    preview.textContent='Открыть PDF';
+    a.before(preview);
     const markSent = async () => {
       const current = await dbGet(t.id);
       if (!current) return;
