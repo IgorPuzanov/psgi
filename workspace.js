@@ -153,14 +153,17 @@ function viewReferences(role,id) {
   });
 }
 
-function viewSchedules(role) {
-  protectedWorkspace(role,'Графики',`/${role}/more`,async panel=>{
-    const {items,topics=[]}=await serverRequest('/schedules');
+function viewSchedules(role,local=false) {
+  const render=async panel=>{
+    const {items,topics=[]}=await (local?localSchedules():serverRequest('/schedules'));
     if(!panel.isConnected)return;
     const day=workplaceDay();
     const initial=Math.max(2027,+day.slice(0,4));
     let editor=null;
-    panel.innerHTML=`<section class="card schedule-controls"><label class="field"><span class="lbl">Год</span><select id="scheduleYear">${[...new Set([2027,2028,2029,initial,...items.map(item=>item.year)])].sort().map(year=>`<option ${year===initial?'selected':''}>${year}</option>`).join('')}</select></label>
+    panel.innerHTML=`${local?`<section class="card"><p>Графики и изменения хранятся в приложении на этом устройстве.</p>
+      <label class="btn ghost file-btn">Загрузить файл графиков<input type="file" id="localScheduleImport" accept=".psgigraphs,application/json"></label>
+      <p class="meta" id="localScheduleStatus" role="status">${items.length?`Сохранено записей: ${items.length}`:'Выберите файл «Графики ПСГИ».'}</p></section>`:''}
+      <section class="card schedule-controls"><label class="field"><span class="lbl">Год</span><select id="scheduleYear">${[...new Set([2027,2028,2029,initial,...items.map(item=>item.year)])].sort().map(year=>`<option ${year===initial?'selected':''}>${year}</option>`).join('')}</select></label>
       <button class="btn ghost" id="scheduleYearAdd" type="button">Другой год</button><button class="btn accent" id="scheduleAdd" type="button">Добавить запись</button></section>
       <div id="scheduleEditor"></div><div id="scheduleReminders"></div>
       <section class="card schedule-filters"><label class="field"><span class="lbl">Поиск по графикам</span><input id="scheduleQuery" type="search" placeholder="ФИО, СИЗ или название"></label>
@@ -168,6 +171,17 @@ function viewSchedules(role) {
       <label class="field"><span class="lbl">Сортировка</span><select id="scheduleSort"><option value="start">По сроку</option><option value="subject">По сотруднику или СИЗ</option></select></label></section>
       <div id="scheduleTopics"></div><div id="scheduleList"></div>`;
     const year=panel.querySelector('#scheduleYear'), results=panel.querySelector('#scheduleList'), edit=panel.querySelector('#scheduleEditor');
+    const importer=panel.querySelector('#localScheduleImport');
+    if(importer)importer.onchange=async()=>{
+      if(!importer.files[0])return;
+      const status=panel.querySelector('#localScheduleStatus');
+      importer.disabled=true;
+      try{
+        const {added,total}=await importLocalSchedules(importer.files[0]);
+        if(panel.isConnected){await render(panel);panel.querySelector('#localScheduleStatus').textContent=`Добавлено: ${added}. Всего записей: ${total}.`;}
+      }catch(error){status.textContent=error.message;}
+      finally{importer.disabled=false;importer.value='';}
+    };
     const field=(name,label,type,value='',attrs='')=>`<label class="field"><span class="lbl">${label}</span><input name="${name}" type="${type}" value="${esc(value)}" ${attrs}></label>`;
     const planLabel=item=>[fmtDate(item.start),item.startTime].filter(Boolean).join(' ')+
       (item.end||item.endTime?' — '+[fmtDate(item.end||item.start),item.endTime].filter(Boolean).join(' '):'');
@@ -233,7 +247,7 @@ function viewSchedules(role) {
         if(editor){values.id=editor.id;values.revision=editor.revision;}
         button.disabled=true;
         try{
-          const result=await serverRequest('/schedules',{method:'POST',body:values});
+          const result=await (local?saveLocalSchedule(values):serverRequest('/schedules',{method:'POST',body:values}));
           const index=items.findIndex(entry=>entry.id===result.item.id);
           if(index===-1)items.push(result.item);else items[index]=result.item;
           if(![...year.options].some(option=>+option.value===result.item.year))year.add(new Option(result.item.year,result.item.year));
@@ -263,7 +277,7 @@ function viewSchedules(role) {
         let url;
         dialog.onclose=()=>{if(url)URL.revokeObjectURL(url);dialog.remove();};
         try{
-          url=await referenceBlob('/schedules/source/'+scheduleSource);
+          url=await (local?localScheduleSource(scheduleSource):referenceBlob('/schedules/source/'+scheduleSource));
           if(!dialog.isConnected){URL.revokeObjectURL(url);return;}
           const image=new Image();image.alt='Фото исходного графика';image.src=url;
           dialog.querySelector('[role=status]').replaceChildren(image);
@@ -278,14 +292,21 @@ function viewSchedules(role) {
       document.body.append(dialog);dialog.showModal();dialog.onclose=()=>dialog.remove();
       const log=dialog.querySelector('div');
       try{
-        const result=await serverRequest('/schedules/'+item.id+'/history');
+        const result=local?{items:(await localSchedules()).history[item.id]||[]}:
+          await serverRequest('/schedules/'+item.id+'/history');
         log.innerHTML=result.items.map(entry=>`<p><strong>Версия ${entry.revision} · ${esc(entry.author)}</strong><br>
-          ${fmtDT(entry.changed_at)} · План ${planLabel(entry.item)} · Факт ${entry.item.done?fmtDate(entry.item.done):'—'}
+          ${entry.changed_at?fmtDT(entry.changed_at)+' · ':''}План ${planLabel(entry.item)} · Факт ${entry.item.done?fmtDate(entry.item.done):'—'}
           ${entry.item.cancelled?' · Отменено':''}${entry.item.note?`<br>${esc(entry.item.note)}`:''}</p>`).join('');
       }catch(error){log.textContent=error.message;}
     };
     draw();
-  });
+  };
+  if(!local){protectedWorkspace(role,'Графики',`/${role}/more`,render);return;}
+  header('Графики на устройстве',`/${role}/more`);
+  const panel=document.createElement('section');
+  panel.className='workspace-screen';
+  app.replaceChildren(panel);
+  render(panel).catch(error=>{if(panel.isConnected)panel.textContent=error.message;});
 }
 
 function scheduleReminderHTML(items,day,detailed=false) {
@@ -316,6 +337,12 @@ async function populateHomeWorkspace(role,hello) {
   const panel=$('#homeWorkspace'),issue=$('#homeIssue'),greeting=$('#homeGreeting');
   const user=await workspaceIdentity().catch(()=>null);
   if(!panel.isConnected)return;
+  localSchedules().then(({items})=>{
+    if(!panel.isConnected||!items.some(item=>['late','soon'].includes(scheduleState(item))))return;
+    const reminder=document.createElement('section');reminder.className='home-widget-group';
+    reminder.innerHTML=`<div class="section-label"><h3>Графики на устройстве</h3><a href="#/h/local-schedules">Открыть графики</a></div>${scheduleReminderHTML(items,workplaceDay())}`;
+    panel.append(reminder);
+  }).catch(()=>{});
   if(user){
     const key='workspaceGreeting:'+user.id;
     const label=lsGet(key);
@@ -356,7 +383,7 @@ async function populateWorkspaceCatalog(role) {
   let selected=widgetOrder(user,items);
   const draw=()=>{
     const ordered=[...selected.map(path=>items.find(item=>item.path===path)),...items.filter(item=>!selected.includes(item.path))];
-    panel.innerHTML=`${workspaceRole(user)?`<div class="tiles">${tile(`#/${user.role}/schedules`,'clipboard','Графики')}</div>`:''}
+    panel.innerHTML=`<div class="tiles">${tile('#/h/local-schedules','clipboard','Графики на устройстве')}${workspaceRole(user)?tile(`#/${user.role}/schedules`,'clipboard','Графики на сервере'):''}</div>
       <details class="card mt" ${panel.querySelector('details')?.open?'open':''}><summary>Ярлыки на главной</summary><div class="widget-picker">
       ${ordered.map(item=>`<div><label class="check"><input type="checkbox" data-widget="${item.path}" ${selected.includes(item.path)?'checked':''}> ${item.title}</label>
         ${selected.indexOf(item.path)>0?`<button type="button" class="btn ghost small" data-widget-up="${item.path}" aria-label="Поднять ${item.title}">↑</button>`:''}</div>`).join('')}

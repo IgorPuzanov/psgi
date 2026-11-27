@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_RELEASE = 'psgi-2026-11-27-v25.13';
+const APP_RELEASE = 'psgi-2026-11-27-v25.14';
 const RELEASE_NOTES = [
   'Телефоны и инструкции по охране труда доступны с главной и из раздела «Информация».',
   'В заявке начальника можно выбрать инструкции, посмотреть общий черновик и распечатать его после сохранения.',
@@ -339,7 +339,7 @@ function viewBackup(role) {
 
 function viewReleases(role) {
   header('Что нового в ПСГИ', `/${role}/more`);
-  app.innerHTML = `<div class="card"><p class="meta">27.11.2026</p><h2>ПСГИ · 25.13</h2><ul>
+  app.innerHTML = `<div class="card"><p class="meta">27.11.2026</p><h2>ПСГИ · 25.14</h2><ul>
     <li>Новая шапка и заставка с утверждённым логотипом, компактные действия на главной.</li>
     <li>Шпаргалки с поиском и предпросмотром, графики с контролем сроков и историей.</li>
     <li>Рабочий профиль и управление доступом к новым серверным разделам.</li></ul>
@@ -503,6 +503,7 @@ async function router() {
     if (parts[1] === 'more') viewMore(role);
     else if (parts[1] === 'reference') viewReferences(role,parts[2]);
     else if (parts[1] === 'schedules') viewSchedules(role);
+    else if (parts[1] === 'local-schedules') viewSchedules(role,true);
     else if (parts[1] === 'archive') await viewWorkspaceArchive(role);
     else if (parts[1] === 'instructions' && ['h', 'e', 'b', 'm'].includes(role)) viewSafetyLibrary(role);
     else if (parts[1] === 'materials' && ['h', 'e', 'b', 'm'].includes(role)) viewPrivateMaterials(role);
