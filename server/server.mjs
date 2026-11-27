@@ -5,13 +5,16 @@ import { promisify } from 'node:util';
 import { dirname, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { workspaceRoutes } from './workspace.mjs';
 
 const derive = promisify(scrypt);
 const hash = value => createHash('sha256').update(value).digest('hex');
 async function passwordHash(password) { const salt = randomBytes(16).toString('hex'); return salt + ':' + (await derive(password, salt, 64)).toString('hex'); }
 async function passwordMatches(password, encoded) { const [salt, expected] = encoded.split(':'); const actual = await derive(password, salt, 64); const target = Buffer.from(expected, 'hex'); return target.length === actual.length && timingSafeEqual(target, actual); }
 const error = (status, message) => Object.assign(new Error(message), { status });
-const publicUser = row => ({ id: row.id, login: row.login, name: row.name, role: row.role });
+const publicUser = row => ({ id: row.id, login: row.login, name: row.name, role: row.role,
+  admin: !!row.admin, status: row.status || 'active' });
+const accessStates=new Set(['pending','active','blocked','disabled']);
 
 export async function createChatServer(config = {}) {
   const databaseFile = config.databaseFile || process.env.PSGI_DATABASE || resolve('data/psgi.sqlite');
@@ -21,13 +24,20 @@ export async function createChatServer(config = {}) {
     CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, login TEXT UNIQUE NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('b','m','e')), password TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, author_id TEXT NOT NULL REFERENCES users(id), text TEXT NOT NULL, at INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS messages_at ON messages(at);`);
+    CREATE INDEX IF NOT EXISTS messages_at ON messages(at);
+    CREATE TABLE IF NOT EXISTS user_access (user_id TEXT PRIMARY KEY REFERENCES users(id), status TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS user_access_history (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+      actor_id TEXT NOT NULL REFERENCES users(id), status TEXT NOT NULL, reason TEXT NOT NULL, at INTEGER NOT NULL);`);
+  const bootstrapLogin=config.adminLogin||process.env.PSGI_ADMIN_LOGIN||'admin';
   if (!db.prepare('SELECT id FROM users LIMIT 1').get()) {
     const password = config.adminPassword || process.env.PSGI_ADMIN_PASSWORD;
     if (!password || password.length < 12) { db.close(); throw new Error('Для первого запуска задай PSGI_ADMIN_PASSWORD длиной не менее 12 символов.'); }
-    db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(randomUUID(), process.env.PSGI_ADMIN_LOGIN || 'admin', 'Начальник ПСГИ', 'b', await passwordHash(password));
+    db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(randomUUID(), bootstrapLogin, config.adminName||process.env.PSGI_ADMIN_NAME||'Начальник ПСГИ', 'b', await passwordHash(password));
   }
+  const adminId=db.prepare("SELECT id FROM users WHERE login=? AND role='b'").get(config.primaryAdminLogin||process.env.PSGI_PRIMARY_ADMIN_LOGIN||bootstrapLogin)?.id;
+  const dummyPassword=await passwordHash(randomBytes(32).toString('hex'));
   const allowedOrigins = new Set(config.allowedOrigins || (process.env.PSGI_ALLOWED_ORIGINS || 'https://igorpuzanov.github.io').split(',').map(s => s.trim()).filter(Boolean));
+  const routeWorkspace=workspaceRoutes(db,config.referenceRoot||process.env.PSGI_REFERENCE_DIR);
   const limits = new Map();
   function rateLimit(key, max, interval) {
     const now = Date.now(); let slot = limits.get(key);
@@ -44,8 +54,10 @@ export async function createChatServer(config = {}) {
   const getSession = req => {
     const token = req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1];
     if (!token) throw error(401, 'Войди в учётную запись на сервере');
-    const session = db.prepare('SELECT u.*, s.expires FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=?').get(hash(token));
+    const session = db.prepare("SELECT u.*, s.expires, COALESCE(a.status,'active') status FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN user_access a ON a.user_id=u.id WHERE s.token=?").get(hash(token));
     if (!session || session.expires <= Date.now()) throw error(401, 'Сессия истекла. Войди снова.');
+    if (session.status!=='active') throw error(403,'Доступ заблокирован. Обратитесь к администратору ПСГИ.');
+    session.admin=session.id===adminId;
     return session;
   };
   const server = createServer(async (req, res) => {
@@ -58,32 +70,67 @@ export async function createChatServer(config = {}) {
       if (origin && !allowedOrigins.has(origin)) throw error(403, 'Этот адрес приложения не разрешён на сервере');
       if (req.method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization'); res.setHeader('Access-Control-Max-Age', '600'); res.writeHead(204); res.end(); return; }
       rateLimit('ip:' + req.socket.remoteAddress, 300, 60000);
-      const path = new URL(req.url, 'http://localhost').pathname;
+      const url = new URL(req.url, 'http://localhost'), path=url.pathname;
       if (path === '/health' && req.method === 'GET') { respond(200, { status: 'ok', app: 'ПСГИ', version: 1 }); return; }
       if (path === '/login' && req.method === 'POST') {
         rateLimit('login:' + req.socket.remoteAddress, 8, 60000);
         const body = await readJSON(req, 4096);
         if (!textField(body.login, 100) || !textField(body.password, 256)) throw error(400, 'Укажи логин и пароль');
-        const user = db.prepare('SELECT * FROM users WHERE login=?').get(body.login.trim());
-        const valid = user ? await passwordMatches(body.password, user.password) : await passwordMatches(body.password, await passwordHash('dummy-password-for-timing'));
+        const user = db.prepare("SELECT u.*, COALESCE(a.status,'active') status FROM users u LEFT JOIN user_access a ON a.user_id=u.id WHERE login=?").get(body.login.trim());
+        const valid = await passwordMatches(body.password,user?.password||dummyPassword);
         if (!user || !valid) throw error(401, 'Неверный логин или пароль');
+        if(user.status!=='active')throw error(403,user.status==='pending'?'Учётная запись ожидает одобрения.':'Доступ заблокирован. Обратитесь к администратору ПСГИ.');
+        user.admin=user.id===adminId;
         const token = randomBytes(32).toString('base64url');
         db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());
         db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(hash(token), user.id, Date.now() + 8 * 3600000);
         respond(200, { token, user: publicUser(user) }); return;
       }
       const user = getSession(req);
+      if (await routeWorkspace({req,res,path,url,user,respond,readJSON})) return;
       if (path === '/logout' && req.method === 'POST') { db.prepare('DELETE FROM sessions WHERE token=?').run(hash(req.headers.authorization.slice(7))); respond(200, { ok: true }); return; }
+      const userAccess=path.match(/^\/users\/([\da-f-]{36})\/access$/);
+      if (userAccess) {
+        if (!user.admin) throw error(403,'Управление доступом доступно главному администратору.');
+        const id=userAccess[1];
+        if (!db.prepare('SELECT id FROM users WHERE id=?').get(id)) throw error(404,'Учётная запись не найдена.');
+        if (req.method==='GET') {
+          respond(200,{items:db.prepare('SELECT h.status,h.reason,h.at,u.name actor FROM user_access_history h JOIN users u ON u.id=h.actor_id WHERE user_id=? ORDER BY h.id DESC LIMIT 100').all(id)});
+          return;
+        }
+        if (req.method==='POST') {
+          const body=await readJSON(req,4096);
+          if (!accessStates.has(body.status)||id===adminId) throw error(400,'Главная учётная запись и этот статус недоступны для изменения.');
+          const reason=typeof body.reason==='string'?body.reason.trim().slice(0,320):'';
+          db.exec('BEGIN IMMEDIATE');
+          try {
+            db.prepare('INSERT INTO user_access VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status').run(id,body.status);
+            if (body.status!=='active') db.prepare('DELETE FROM sessions WHERE user_id=?').run(id);
+            db.prepare('INSERT INTO user_access_history(user_id,actor_id,status,reason,at) VALUES (?,?,?,?,?)').run(id,user.id,body.status,reason,Date.now());
+            db.exec('COMMIT');
+          } catch (cause) { db.exec('ROLLBACK'); throw cause; }
+          respond(200,{ok:true});return;
+        }
+      }
       if (path === '/users') {
         if (user.role !== 'b') throw error(403, 'Учётные записи создаёт начальник');
-        if (req.method === 'GET') { respond(200, { users: db.prepare('SELECT id,login,name,role FROM users ORDER BY name').all() }); return; }
+        if (req.method === 'GET') {
+          const users=db.prepare("SELECT u.id,u.login,u.name,u.role,COALESCE(a.status,'active') status FROM users u LEFT JOIN user_access a ON a.user_id=u.id ORDER BY u.name").all();
+          respond(200, {users:users.map(entry=>publicUser({...entry,admin:entry.id===adminId}))}); return;
+        }
         if (req.method === 'POST') {
           const body = await readJSON(req, 4096);
           if (!textField(body.login, 100) || !textField(body.name, 200) || !textField(body.password, 256) || body.password.length < 12 || !['b', 'm', 'e'].includes(body.role)) throw error(400, 'Проверь имя, логин, роль и пароль (не менее 12 символов)');
           if (db.prepare('SELECT id FROM users WHERE login=?').get(body.login.trim())) throw error(409, 'Этот логин уже занят');
           const created = { id: randomUUID(), login: body.login.trim(), name: body.name.trim(), role: body.role };
-          db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(created.id, created.login, created.name, created.role, await passwordHash(body.password));
-          respond(201, { user: created }); return;
+          const password=await passwordHash(body.password);
+          db.exec('BEGIN IMMEDIATE');
+          try {
+            db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(created.id, created.login, created.name, created.role,password);
+            if(body.pending===true) db.prepare('INSERT INTO user_access VALUES (?,?)').run(created.id,'pending');
+            db.exec('COMMIT');
+          } catch(cause) { db.exec('ROLLBACK');throw cause; }
+          respond(201, { user: {...created,status:body.pending===true?'pending':'active'} }); return;
         }
       }
       if (path === '/messages') {
@@ -122,7 +169,10 @@ export async function createChatServer(config = {}) {
         respond(200, { text }); return;
       }
       throw error(404, 'Раздел API не найден');
-    } catch (exception) { respond(exception.status || 500, { error: exception.status ? exception.message : 'Ошибка сервера. Обратись к администратору.' }); }
+    } catch (exception) {
+      if (res.headersSent||res.destroyed) return;
+      respond(exception.status || 500, { error: exception.status ? exception.message : 'Ошибка сервера. Обратись к администратору.' });
+    }
   });
   server.requestTimeout = 50000; server.headersTimeout = 15000;
   server.on('close', () => db.close());

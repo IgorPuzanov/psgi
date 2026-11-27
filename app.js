@@ -562,8 +562,6 @@ function weatherHTML(w,notice='') {
   const body=valid?`${icon(wIcon(w.code))}<span><b>${w.t>0?'+':''}${w.t}°</b><small>${esc(w.place||'здесь')}</small><small>${Number.isFinite(w.pressure)?w.pressure+' мм рт. ст.':'Давление —'}</small><small>${Number.isFinite(w.humidity)?'Влажность '+w.humidity+'%':'Влажность —'}</small></span>`:`${icon('pin')}<span>Погода —<small>Давление —</small><small>Влажность —</small><small>Указать город</small></span>`;
   return `<button type="button" class="hw hw-set" data-hw="city" title="Выбрать город">${body}</button>${position?`<p class="meta">${positionHTML(position.latitude,position.longitude,position.accuracy)}</p>`:''}<small class="weather-time">${valid?`${stale?'Сохранено':'Загружено'} ${esc(new Date(w.at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}))}`:'Выбери город один раз'}</small><div class="weather-actions"><button type="button" data-hw="refresh">Обновить</button><button type="button" data-hw="locate">Где я нахожусь</button></div><p class="weather-status" role="status">${esc(notice)}</p>`;
 }
-const homeTilesHTML = c => tile('#/h/kusty', 'rig', 'Кусты', kustOverdue()) + tile('#/h/docs/permit', 'permit', 'Наряды') + tile('#/h/devices', 'meter', 'Приборы', c.dev) +
-  tile('#/h/people', 'people', 'Люди', upcomingBdays(0).length) + tile('#/h/games', 'game', 'Игры');
 function viewRoles() {
   header('ПСГИ', null);
   const role = currentRole();
@@ -574,45 +572,26 @@ function viewRoles() {
       ${icon(ic)}<strong>${title}</strong>${caption ? `<small>${caption}</small>` : ''}</a>`;
   app.innerHTML = `
     <section class="dashboard-hero" aria-label="Производственная служба грозозащиты и изоляции">
-      <img class="psgi-logo" src="psgi-logo-approved.png" alt="ПСГИ — Производственная служба грозозащиты и изоляции" width="791" height="290">
+      <div class="home-logo-panel"><img class="psgi-logo" src="psgi-logo-approved.png" alt="ПСГИ — Производственная служба грозозащиты и изоляции" width="791" height="290"></div>
+      <a class="home-profile" href="#/${role}/connection" aria-label="Рабочий профиль">${icon('people')}</a>
     </section>
     <section class="home-hello"><div><p class="hh-day">${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS_GEN[d.getMonth()]} ${d.getFullYear()}</p>
-      <h2>${hello}!</h2>
-      <details class="home-calendar"><summary>Календарь</summary><input aria-label="Календарь" type="date" value="${today()}"></details></div>
+      <h2 id="homeGreeting">${hello}</h2></div>
       <div id="homeW">${weatherHTML(jget('homeW', null))}</div></section>
     <div class="dashboard-utilities">
       <a class="btn ghost" href="#/h/phones">${icon('phone')} Телефонный справочник</a>
     </div>
     <nav class="dashboard-grid home-actions" aria-label="Задания">
-      ${link('/b/new', 'clipboard', 'Выдать задание', '', true)}
+      <a class="dashboard-link primary" id="homeIssue" href="#/b/new" hidden>${icon('clipboard')}<strong>Выдать задание</strong></a>
       ${link('/e', 'permit', 'Выполнение задания')}
     </nav>
     <nav class="dashboard-grid home-directories" aria-label="Быстрый доступ">
-      ${link('/e/new', 'clipboard', 'Новая заявка')}
-      ${link('/h/people', 'people', 'Бригады и работники')}
-      ${link('/h/instructions', 'book', 'Инструкции по охране труда')}
-      ${link('/' + role + '/guides', 'bolt', 'Типовые работы')}
-      ${link('/' + role, 'permit', 'Мои задания и история')}
-      ${link('/' + role + '/monthly', 'meter', 'Отчёты', 'Месячные задания и Excel')}
       ${link('/' + role + '/docs/info', 'info', 'Информация для ознакомления')}
     </nav>
+    <div id="homeWorkspace"></div>
     ${bdayBannerHTML()}
-    <h3 class="home-h">Войти как</h3>
-    <div class="roles2">
-      <button class="role-card" data-role="e"><span class="rc-ic">${icon('helmet')}</span><b>Электромонтёр</b>
-        <span class="meta">Заявки, инструктаж, протоколы</span><span id="homeUnread"></span></button>
-      <button class="role-card navy" data-role="b"><span class="rc-ic">${icon('clipboard')}</span><b>Начальник</b>
-        <span class="meta">Заявки и полученные протоколы</span></button>
-
-    </div>
-    <h3 class="home-h">Быстрый доступ</h3>
-    <div class="tiles home-tiles" id="homeTiles">${homeTilesHTML({})}</div>
-    <p class="home-note">В рабочей версии здесь будет вход по логину.</p>
-    <button class="btn link" id="reset">Сбросить демо-данные</button>`;
-  app.querySelectorAll('[data-role]').forEach(b => b.onclick = () => { location.hash = '/' + b.dataset.role; });
-  counts().then(c => { const ht = $('#homeTiles');
-    if (ht) ht.innerHTML = homeTilesHTML(c);
-    const el = $('#homeUnread'); if (el && c.unread) el.innerHTML = `<span class="badge st-pending">Требует внимания: ${c.unread}</span>`; });
+    <p class="home-note">Заявки и протоколы этого устройства доступны в «Разделы → Данные и копии» для переноса.</p>`;
+  populateHomeWorkspace(role,hello);
   const weatherBox=$('#homeW');let weatherPaint=0;
   const paintWeather=async mode=>{
     const sequence=++weatherPaint;
@@ -622,10 +601,6 @@ function viewRoles() {
   };
   weatherBox.onclick=e=>{const button=e.target.closest('[data-hw]');if(button)paintWeather(button.dataset.hw);};
   paintWeather();
-  $('#reset').onclick = async () => {
-    if (!confirm('Удалить все заявки и протоколы и вернуть примеры?')) return;
-    await dbClear(); await seed(); toast('Демо-данные восстановлены');
-  };
 }
 
 const byNew = (a, b) => (b.created || 0) - (a.created || 0);
@@ -2169,7 +2144,7 @@ function routeCore() {
   viewRoles();
 }
 
-const PSGI_SW_VERSION = '25.11';
+const PSGI_SW_VERSION = '25.12';
 
 async function startApp() {
   const splashVisible = $('#launchSplash')?.hidden === false;

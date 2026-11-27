@@ -123,9 +123,13 @@ function viewSafetyLibrary(role) {
     ${isLocalMaterialsHost() ? '' : `<div class="actions">${privateMaterialsLink(role)}</div>`}
     <label class="field"><span class="lbl">Найти по названию или номеру</span><input id="safetySearch" type="search" autocomplete="off"></label></div>
     <details class="card mt"><summary>Общий краткий инструктаж</summary>${safetyBriefHTML(SAFETY_INSTRUCTIONS)}</details>
-    <div id="safetyResults"></div>
+    <div id="instructionReference"></div><div id="safetyResults"></div>
     <a class="btn ghost" href="#/e/tb">Правила по охране труда (ПОТЭЭ)</a>`;
   const search = $('#safetySearch');
+  const link=app.querySelector('#instructionReference');
+  workspaceIdentity().then(user=>{
+    if (link.isConnected&&workspaceRole(user)) link.innerHTML=`<a class="btn ghost mt" href="#/${role}/reference">Шпаргалки</a>`;
+  }).catch(()=>{});
   const draw = () => {
     const query = search.value.trim().toLocaleLowerCase('ru');
     $('#safetyResults').innerHTML = SAFETY_INSTRUCTIONS.filter(doc => `${doc.code} ${doc.title}`.toLocaleLowerCase('ru').includes(query))

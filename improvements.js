@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_RELEASE = 'psgi-2026-11-23-v25';
+const APP_RELEASE = 'psgi-2026-11-27-v25.12';
 const RELEASE_NOTES = [
   'Телефоны и инструкции по охране труда доступны с главной и из раздела «Информация».',
   'В заявке начальника можно выбрать инструкции, посмотреть общий черновик и распечатать его после сохранения.',
@@ -124,13 +124,17 @@ const saveRegister = entries => lsSet('psgiRegisters', JSON.stringify(entries));
 const registerEntries = () => jget('psgiRegisters', []);
 const byNewest = (a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0);
 function roleTiles(role) {
-  const items = [['guides', 'book', 'Наглядные инструкции'], ['monthly', 'clipboard', 'Нормированное задание по месяцам'], ['ideas', 'bolt', 'Рационализаторские предложения'], ['chat', 'people', 'Внутренний чат'], ['assets', 'meter', 'Оборудование'], ['kusty', 'rig', 'Кусты'], ['map', 'pin', 'Карта оборудования'], ['devices', 'meter', 'Приборы и паспорта'], ['training', 'book', 'Обучение'], ['cars', 'pin', 'Машины'], ['backup', 'gear', 'Данные и копии'], ['releases', 'info', 'Что нового']];
+  const items = [['guides', 'book', 'Типовые работы'], ['monthly', 'clipboard', 'Отчёты и нормированные задания'], ['ideas', 'bolt', 'Рационализаторские предложения'], ['chat', 'people', 'Внутренний чат'], ['assets', 'meter', 'Оборудование'], ['kusty', 'rig', 'Карты месторождений Сургутнефть'], ['map', 'pin', 'Карта оборудования'], ['devices', 'meter', 'Приборы и паспорта'], ['training', 'book', 'Обучение'], ['cars', 'pin', 'Машины'], ['backup', 'gear', 'Данные и копии'], ['releases', 'info', 'Что нового']];
   if (isManager(role)) items.unshift(['registers', 'permit', 'СИЗ и журналы']);
   return `<div class="tiles">${items.map(([path, ic, title]) => tile(`#/${role}/${path}`, ic, title)).join('')}</div>`;
 }
 function viewMore(role) {
   header('Разделы', `/${role}`);
-  app.innerHTML = `<h2>Рабочие разделы</h2><div class="quick-directories tiles">${tile(`#/${role}/phones`, 'phone', 'Телефонный справочник')}${tile(`#/${role}/instructions`, 'book', 'Инструкции по охране труда')}</div>${roleTiles(role)}<div class="tiles">${tile(`#/${role}/people`, 'people', 'Сотрудники')}${tile(`#/${role}/docs/info`, 'info', 'Информация для ознакомления')}${tile(`#/${role}/docs/permit`, 'permit', 'Наряды')}${tile('#/e/tb', 'book', 'Техника безопасности')}</div><a class="btn ghost mt" href="#/">Сменить роль</a>`;
+  app.innerHTML = `<h2>Рабочие разделы</h2><div id="workspaceCatalog"></div><div class="quick-directories tiles">${tile(`#/${role}/phones`, 'phone', 'Телефонный справочник')}${tile(`#/${role}/instructions`, 'book', 'Инструкции')}</div>${roleTiles(role)}<div class="tiles">${tile(`#/${role}/people`, 'people', 'Сотрудники')}${tile(`#/${role}/docs/info`, 'info', 'Информация для ознакомления')}${tile(`#/${role}/docs/permit`, 'permit', 'Наряды')}${tile('#/e/tb', 'book', 'Техника безопасности')}${tile('#/e/new','clipboard','Новая заявка')}${tile('#/e','permit','Мои задания')}${tile(`#/${role}/archive`,'permit','Архив')}</div>
+    <details class="card mt"><summary>Данные прежней версии на этом устройстве</summary>
+      <p class="meta">Локальные заявки и журналы хранятся отдельно от рабочего аккаунта.</p><div class="actions">
+      <a class="btn ghost small" href="#/e">Электромонтёр</a><a class="btn ghost small" href="#/m">Мастер</a><a class="btn ghost small" href="#/b">Начальник</a></div></details>`;
+  populateWorkspaceCatalog(role);
 }
 function viewRegisters(role, kind) {
   header(kind ? REGISTERS[kind] || 'Журнал' : 'СИЗ и журналы', `/${role}/more`);
@@ -335,7 +339,11 @@ function viewBackup(role) {
 
 function viewReleases(role) {
   header('Что нового в ПСГИ', `/${role}/more`);
-  app.innerHTML = `<div class="card"><span class="badge st-sent">Обновление от 17.11.2026</span><h2>ПСГИ · версия 22</h2><ul>${RELEASE_NOTES.map(n => `<li>${esc(n)}</li>`).join('')}</ul><p class="meta">Передача данных между разными устройствами и подключение СКРТ требуют отдельной настройки сервера и доступа.</p></div>`;
+  app.innerHTML = `<div class="card"><p class="meta">27.11.2026</p><h2>ПСГИ · 25.12</h2><ul>
+    <li>Новая шапка и заставка с утверждённым логотипом, компактные действия на главной.</li>
+    <li>Шпаргалки с поиском и предпросмотром, графики с контролем сроков и историей.</li>
+    <li>Рабочий профиль и управление доступом к новым серверным разделам.</li></ul>
+    <details><summary>Ранние обновления</summary><ul>${RELEASE_NOTES.map(n => `<li>${esc(n)}</li>`).join('')}</ul></details></div>`;
   lsSet('psgiSeenRelease', APP_RELEASE);
 }
 
@@ -347,7 +355,7 @@ function bottomNav() {
   let activePath = `/${role}/more`;
   if (path === '/') activePath = '/';
   else if (path === `/${role}` || /\/(?:task|edit|new)(?:\/|$)/.test(path)) activePath = `/${role}`;
-  else if (path.endsWith('/instructions') || path.endsWith('/materials')) activePath = `/${role}/instructions`;
+  else if (/\/(instructions|materials|reference)(\/|$)/.test(path)) activePath = `/${role}/instructions`;
   else if (path.endsWith('/people')) activePath = `/${role}/people`;
   nav.innerHTML = items.map(([href, ic, label]) => `<a href="#${href}" ${href === activePath ? 'aria-current="page" class="active"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('');
 }
@@ -448,18 +456,17 @@ async function enhancePage(role, parts) {
     if (doc?.sourceUrl && /^https?:\/\//.test(doc.sourceUrl)) { const source = document.createElement('a'); source.className = 'btn ghost mt'; source.href = doc.sourceUrl; source.target = '_blank'; source.rel = 'noopener'; source.textContent = 'Читать первоисточник'; app.append(source); }
     if (isManager(role)) await markManagerRead();
   }
-  if (parts.length === 0 || parts.length === 1 || ['manuals', 'device', 'training'].includes(parts[1])) {
+  if (parts.length === 1 || ['manuals', 'device', 'training'].includes(parts[1])) {
     const profile = document.createElement('label'); profile.className = 'profile-selector no-print'; profile.innerHTML = `<span>Сотрудник</span><select id="currentPerson"><option value="">Выбрать себя</option>${getStaff().map(n => `<option ${n === me() ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
-    if (!parts.length) app.querySelector('.home-actions').after(profile);
-    else app.prepend(profile);
+    app.prepend(profile);
     profile.querySelector('select').onchange = e => { lsSet('me', e.target.value); router(); };
   }
   if (parts.length === 0) {
-    const note = $('.home-note'); if (note) note.textContent = 'Данные сохраняются на этом устройстве. Перенос и резервные копии — в разделе «Данные». Вход по ролям пока без авторизации.';
     if (lsGet('psgiSeenRelease') !== APP_RELEASE) {
-      const banner = document.createElement('div'); banner.className = 'card release-card'; banner.innerHTML = `<h3>ПСГИ · v25</h3><p class="meta">Телефонный справочник и инструкции по охране труда доступны с главной.</p><a class="btn ghost small mt" href="#/${role}/releases">Что изменилось</a><button class="btn link small" data-release-seen>Понятно</button>`;
-      app.querySelector('.profile-selector').after(banner);
-      banner.querySelector('[data-release-seen]').onclick = () => { lsSet('psgiSeenRelease', APP_RELEASE); banner.remove(); };
+      lsSet('psgiSeenRelease', APP_RELEASE);
+      const notice=document.createElement('details');notice.className='release-notice';
+      notice.innerHTML=`<summary>Что нового</summary><div><p>Обновлён рабочий стол. Добавлены шпаргалки и графики.</p><a href="#/${role}/releases">Все изменения</a></div>`;
+      app.append(notice);
     }
     const reset = $('#reset'); if (reset) reset.remove();
   }
@@ -494,6 +501,9 @@ async function router() {
   ASSET_SECTION.fields.find(f => f.id === 'kust_id').options = kusty().map(k => ({ v: k.id, t: `Куст ${k.name}${k.field ? ' · ' + k.field : ''}` }));
   try {
     if (parts[1] === 'more') viewMore(role);
+    else if (parts[1] === 'reference') viewReferences(role,parts[2]);
+    else if (parts[1] === 'schedules') viewSchedules(role);
+    else if (parts[1] === 'archive') await viewWorkspaceArchive(role);
     else if (parts[1] === 'instructions' && ['h', 'e', 'b', 'm'].includes(role)) viewSafetyLibrary(role);
     else if (parts[1] === 'materials' && ['h', 'e', 'b', 'm'].includes(role)) viewPrivateMaterials(role);
     else if (parts[1] === 'chat') await viewChat(role, parts[2]);

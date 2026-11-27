@@ -34,8 +34,6 @@ a:not(.btn) { color: var(--brand); }
 .btn.link { background: transparent; color: var(--muted); }
 .home-hello { background: var(--brand); border: 1px solid var(--brand); color: #fff; }
 .home-hello::after { height: 3px; background: var(--accent); }
-.home-calendar summary { color: #fff; cursor: pointer; margin: 8px 0; }
-.home-calendar input { max-width: 100%; }
 #homeW { min-width: 0; }
 #homeW .meta, #homeW a { color: #fff; }
 #homeW .meta { overflow-wrap: anywhere; font-size: .79rem; }
@@ -165,14 +163,13 @@ details.norms summary, details.norms h4, .calc-val { color: var(--brand); }
 .paper, .protocol-paper { color-scheme: light; color: #192536; }
 .safety-print-sheet { display: none; }
 .app-loading {
-  width: min(100%, 390px, calc((100svh - 72px) * 0.5385)); margin: 0 auto; overflow: hidden;
-  border-radius: 18px; background: #051525; color: #fff;
+  width: min(100%, 540px); min-height: 100svh; margin: 0 auto; padding: 24px;
+  display: grid; align-content: center; background: var(--bg); color: var(--brand);
 }
 .app-loading[hidden] { display: none; }
-.loading-art { position: relative; aspect-ratio: 412 / 765; overflow: hidden; }
-.loading-art img { display: block; width: 100%; height: auto; position: absolute; transform: translateY(-5%); }
+.loading-art img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 12px; }
 .loading-status { display: grid; justify-items: center; gap: 10px; padding: 9px 22px 19px; }
-.loading-status progress { width: min(240px, 82%); height: 9px; accent-color: #25b6ff; }
+.loading-status progress { width: min(240px, 82%); height: 8px; accent-color: var(--brand); }
 body:has(.app-loading:not([hidden])) .top { display: none; }
 body:has(.app-loading:not([hidden])) main { padding: 0; }
 .btn.accent { background: var(--accent); box-shadow: none; }

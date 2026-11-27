@@ -10,7 +10,7 @@ async function serverRequest(path, { method = 'GET', body, signal } = {}) {
   const session = serverSession();
   const response = await fetch(serverUrl() + path, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(session?.token ? { Authorization: 'Bearer ' + session.token } : {}) }, body: body ? JSON.stringify(body) : undefined, signal: signal || AbortSignal.timeout(45000), cache: 'no-store' });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || (response.status === 401 ? 'Войди в учётную запись на сервере' : 'Сервер недоступен'));
+  if (!response.ok) throw Object.assign(new Error(result.error || (response.status === 401 ? 'Войди в учётную запись на сервере' : 'Сервер недоступен')),{status:response.status});
   return result;
 }
 let chatPolling, chatRefreshing = false;
@@ -71,9 +71,10 @@ async function viewChat(role, channel = 'team') {
   if (session) { refreshTeamChat(); chatPolling = setInterval(() => { if (location.hash.includes('/chat')) refreshTeamChat(); else clearInterval(chatPolling); }, 12000); }
 }
 async function viewConnection(role) {
-  header('Подключение чата', `/${role}/chat`);
+  header('Рабочий профиль', '/');
   const session = serverSession();
-  app.innerHTML = `<div class="card"><h2>Сервер ПСГИ</h2><p class="meta">Администратор разворачивает сервер и создаёт учётные записи. Ключ ИИ хранится только на сервере. В это поле вводится адрес сервера, а не API-ключ.</p><form id="serverConfig"><label class="field"><span class="lbl">Адрес сервера</span><input name="url" type="url" value="${esc(serverUrl())}" placeholder="https://psgi.example.ru" required></label><button class="btn ghost">Сохранить адрес</button></form></div>${session ? `<div class="card"><h3>${esc(session.user.name)}</h3><p>Вход выполнен. Роль: ${esc({ b: 'Начальник', m: 'Мастер', e: 'Электромонтёр' }[session.user.role])}</p><button class="btn ghost" id="serverLogout">Выйти</button></div>` : `<form class="card" id="serverLogin"><h3>Вход в рабочий чат</h3><label class="field"><span class="lbl">Логин</span><input name="login" autocomplete="username" required></label><label class="field"><span class="lbl">Пароль</span><input name="password" type="password" autocomplete="current-password" required></label><button class="btn accent">Войти</button></form>`}${session?.user.role === 'b' ? '<a class="btn ghost" href="#/b/chat-users">Учётные записи сотрудников</a>' : ''}<p class="hint">Пока сервер не размещён, общий чат и ИИ не работают между телефонами. Локальные данные приложения сохраняются отдельно.</p>`;
+  app.innerHTML = `<details class="card" ${serverUrl()?'':'open'}><summary>Подключение к серверу ПСГИ</summary><form id="serverConfig" class="mt"><label class="field"><span class="lbl">Адрес сервера</span><input name="url" type="url" value="${esc(serverUrl())}" placeholder="https://psgi.example.ru" required></label><button class="btn ghost">Сохранить адрес</button></form></details>${session ? `<div class="card"><h2>${esc(session.user.name)}</h2><p>${esc({ b: 'Начальник', m: 'Мастер', e: 'Электромонтёр' }[session.user.role])}</p>
+  <button class="btn ghost" id="workspaceName">Как к вам обращаться?</button><button class="btn ghost mt" id="serverLogout">Выйти</button></div>` : `<form class="card" id="serverLogin"><h2>Вход в ПСГИ</h2><label class="field"><span class="lbl">Табельный номер или выданный логин</span><input name="login" autocomplete="username" required></label><label class="field"><span class="lbl">Пароль</span><input name="password" type="password" autocomplete="current-password" required></label><button class="btn accent">Войти</button><p class="meta" role="status"></p></form>`}${session?.user.role === 'b' ? '<a class="btn ghost" href="#/b/chat-users">Управление пользователями</a>' : ''}`;
   $('#serverConfig').onsubmit = e => {
     e.preventDefault(); let url;
     try { url = new URL(e.target.elements.url.value); } catch { toast('Нужен корректный адрес сервера'); return; }
@@ -82,17 +83,50 @@ async function viewConnection(role) {
   };
   const login = $('#serverLogin'); if (login) login.onsubmit = async e => {
     e.preventDefault(); const button = e.target.querySelector('button'); button.disabled = true;
-    try { const result = await serverRequest('/login', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); sessionStorage.setItem('psgiSession', JSON.stringify(result)); lsSet('me', result.user.name); addStaff([result.user.name]); toast('Вход выполнен'); location.hash = `/${result.user.role}/chat`; }
-    catch (error) { toast(error.message); } finally { button.disabled = false; }
+    try { const result = await serverRequest('/login', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); sessionStorage.setItem('psgiSession', JSON.stringify(result)); lsSet('me', result.user.name); lsSet('role',result.user.role); addStaff([result.user.name]); location.hash = '/'; }
+    catch (error) { login.querySelector('[role=status]').textContent=error.message; } finally { button.disabled = false; }
+  };
+  const name=$('#workspaceName');if(name)name.onclick=async()=>{
+    const key='workspaceGreeting:'+session.user.id;
+    const value=await askText('Как к вам обращаться?','Имя будет видно в приветствии.',lsGet(key)||'',session.user.name);
+    if(value!==null){lsSet(key,value.slice(0,60));toast('Обращение сохранено');}
   };
   const logout = $('#serverLogout'); if (logout) logout.onclick = async () => { try { await serverRequest('/logout', { method: 'POST' }); } catch {} sessionStorage.removeItem('psgiSession'); viewConnection(role); };
 }
 async function viewChatUsers() {
-  header('Учётные записи чата', '/b/connection');
+  header('Управление пользователями', '/b/connection');
   try {
     const result = await serverRequest('/users');
-    app.innerHTML = `<form class="card" id="newChatUser"><h3>Создать учётную запись</h3><label class="field"><span class="lbl">ФИО</span><input name="name" required></label><label class="field"><span class="lbl">Логин</span><input name="login" autocomplete="off" required></label><label class="field"><span class="lbl">Пароль, от 12 символов</span><input name="password" type="password" minlength="12" autocomplete="new-password" required></label><label class="field"><span class="lbl">Роль</span><select name="role"><option value="e">Электромонтёр</option><option value="m">Мастер</option><option value="b">Начальник</option></select></label><button class="btn accent">Создать</button></form>${result.users.map(u => `<div class="card"><b>${esc(u.name)}</b><p class="meta">${esc(u.login)} · ${esc(u.role)}</p></div>`).join('')}`;
-    $('#newChatUser').onsubmit = async e => { e.preventDefault(); try { await serverRequest('/users', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Учётная запись создана'); viewChatUsers(); } catch (error) { toast(error.message); } };
+    const statuses={pending:'Ожидает одобрения',active:'Активен',blocked:'Заблокирован',disabled:'Отключён'};
+    const admin=result.users.some(user=>user.admin&&user.id===serverSession()?.user.id);
+    const roles={e:'Электромонтёр',m:'Мастер',b:'Начальник ПСГИ'};
+    app.innerHTML = `<form class="card" id="newChatUser"><h3>Создать учётную запись</h3><label class="field"><span class="lbl">ФИО</span><input name="name" required></label><label class="field"><span class="lbl">Табельный номер или рабочий логин</span><input name="login" autocomplete="off" required></label><label class="field"><span class="lbl">Пароль, от 12 символов</span><input name="password" type="password" minlength="12" autocomplete="new-password" required></label><label class="field"><span class="lbl">Роль</span><select name="role"><option value="e">Электромонтёр</option><option value="m">Мастер</option><option value="b">Начальник</option></select></label><label class="check"><input type="checkbox" name="pending"> Требует одобрения</label><button class="btn accent">Создать</button></form>
+      <label class="field"><span class="lbl">Поиск по имени или табельному номеру</span><input id="userAccessSearch" type="search"></label><div id="userAccessList"></div>`;
+    const list=$('#userAccessList'), search=$('#userAccessSearch');
+    const draw=()=>{
+      const q=search.value.trim().toLocaleLowerCase('ru');
+      list.innerHTML=result.users.filter(user=>[user.name,user.login].some(value=>value.toLocaleLowerCase('ru').includes(q))).map(user=>`<section class="card"><strong>${esc(user.name)}</strong>
+        <p class="meta">${esc(user.login)} · ${user.admin?'Главный администратор':roles[user.role]} · ${statuses[user.status]}</p>
+        ${admin&&!user.admin?`<form data-update-access="${user.id}"><label class="field"><span class="lbl">Статус</span><select name="status">${Object.entries(statuses).map(([key,label])=>`<option value="${key}" ${key===user.status?'selected':''}>${label}</option>`).join('')}</select></label>
+          <label class="field"><span class="lbl">Причина</span><input name="reason" maxlength="320"></label><button class="btn ghost small">Сохранить статус</button>
+          <button class="btn ghost small" type="button" data-access-history="${user.id}">История</button></form><div class="meta" role="status"></div>`:''}</section>`).join('');
+    };
+    search.oninput=draw;draw();
+    list.onsubmit=async event=>{
+      const form=event.target,id=form.dataset.updateAccess;
+      if(!id)return;event.preventDefault();
+      try{await serverRequest(`/users/${id}/access`,{method:'POST',body:Object.fromEntries(new FormData(form))});await viewChatUsers();}
+      catch(error){form.nextElementSibling.textContent=error.message;}
+    };
+    list.onclick=async event=>{
+      const id=event.target.dataset.accessHistory;
+      if(!id)return;
+      const status=event.target.form.nextElementSibling;
+      try{const {items}=await serverRequest(`/users/${id}/access`);status.innerHTML=items.map(item=>`<p>${fmtDT(item.at)} · ${esc(item.actor)} · ${statuses[item.status]} ${esc(item.reason)}</p>`).join('')||'Изменений пока нет.';}
+      catch(error){status.textContent=error.message;}
+    };
+    $('#newChatUser').onsubmit = async e => { e.preventDefault(); const body=Object.fromEntries(new FormData(e.target));body.pending=body.pending==='on';
+      try { await serverRequest('/users', { method: 'POST', body }); toast('Учётная запись создана'); viewChatUsers(); } catch (error) { toast(error.message); } };
   } catch (error) { app.innerHTML = `<div class="card">${esc(error.message)}</div>`; }
 }
 window.addEventListener('online', refreshTeamChat);

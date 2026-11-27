@@ -221,7 +221,7 @@ enhancePage=async function(role,parts) {
 async function showOfflineReadiness() {
   let status=$('#offlineReadiness');if(!status){status=document.createElement('p');status.id='offlineReadiness';status.className='hint';app.append(status);}
   try{
-    const cache=await caches.open(`psgi-v${PSGI_SW_VERSION}`),required=['index.html','styles.css','theme-v25.css','app.js','data.js','norms.js','potee.js','extras.js','kusty.js','phone-source.js','private-materials.js','safety-library.js','psgi-logo-approved.png','psgi-approved-icon-192.png','psgi-approved-icon-512.png','psgi-splash-reference.png','manifest.json','icon.svg','improvements.js','repairs.js','monthly.js','device-registry.js','field-work.js','engineering-ideas.js','visual-guides.js','pdf-export.js','ideas.js','chat.js','vendor/pdf-lib.min.js','vendor/fontkit.umd.min.js','vendor/NotoSans-Regular.ttf'];
+    const cache=await caches.open(`psgi-v${PSGI_SW_VERSION}`),required=['index.html','styles.css','theme-v25.css','workspace.css','workspace.js','app.js','data.js','norms.js','potee.js','extras.js','kusty.js','phone-source.js','private-materials.js','safety-library.js','psgi-logo-approved.png','psgi-approved-icon-192.png','psgi-approved-icon-512.png','manifest.json','icon.svg','improvements.js','repairs.js','monthly.js','device-registry.js','field-work.js','engineering-ideas.js','visual-guides.js','pdf-export.js','ideas.js','chat.js','vendor/pdf-lib.min.js','vendor/fontkit.umd.min.js','vendor/NotoSans-Regular.ttf'];
     const files=await Promise.all(required.map(file=>cache.match(new URL(file,location.href.split('#')[0]))));
     const controller = navigator.serviceWorker?.controller;
     const controlled = controller && new URL(controller.scriptURL).searchParams.get('v') === PSGI_SW_VERSION;
