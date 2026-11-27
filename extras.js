@@ -207,57 +207,84 @@ function viewGames(role, which) {
 function viewFieldMission(role) {
   header('Учебный выезд',`/${role}/games`);
   const screen=document.createElement('section');
-  screen.className='field-mission card';
+  screen.className='field-mission';
+  screen.innerHTML=`<div class="mission-stage">
+    <canvas class="mission-road" width="600" height="320" role="img" aria-label="Трёхмерная электролаборатория"></canvas>
+    <div class="mission-hud"><span id="missionPlace">База ПСГИ</span><button type="button" id="missionCamera">Повернуть</button></div>
+    <p class="mission-scene-status" role="status" hidden></p>
+  </div><section class="mission-panel" aria-label="Задание"></section>`;
   app.replaceChildren(screen);
-  let stage=0;
-  const equipment=['Задание и документы','Средства защиты','Кабели','Прибор'];
+  const canvas=screen.querySelector('canvas'),panel=screen.querySelector('.mission-panel');
+  const camera=screen.querySelector('#missionCamera'),place=screen.querySelector('#missionPlace');
+  const equipment=['Задание','Документы','Кабели','Средства защиты','Прибор'];
+  let stage=0,distance=0,lane=0,angle=.83,draw=()=>{};
+  try{draw=fieldMissionScene(canvas);}
+  catch(error){
+    const status=screen.querySelector('.mission-scene-status');
+    status.hidden=false;status.textContent=error.message;
+    camera.hidden=true;
+  }
+  const paint=()=>draw({distance,lane,angle,phase:stage===0?'yard':stage===1?'route':'arrival'});
+  camera.onclick=()=>{angle+=Math.PI/2;paint();};
+  const resize=new ResizeObserver(()=>{if(canvas.isConnected)paint();else resize.disconnect();});
+  resize.observe(canvas);
+  window.addEventListener('hashchange',()=>resize.disconnect(),{once:true});
   const show=()=>{
+    camera.hidden=stage!==0||!screen.querySelector('.mission-scene-status').hidden;
+    place.textContent=['База ПСГИ','Маршрут','Учебный объект','Учебный объект'][stage];
     if(stage===0){
-      screen.innerHTML=`<h2>Миссия 001 · Выезд на КТПН</h2><p>Стажёр, проверь комплект перед выездом. Один предмет неисправен.</p>
-        <ul class="mission-check">${equipment.map((name,i)=>`<li><button type="button" class="btn ghost" data-mission-check="${i}">${name}</button><span aria-live="polite"></span></li>`).join('')}</ul>
-        <button class="btn ghost" id="replaceTrainingMeter" type="button" hidden>Заменить прибор</button>
-        <button class="btn accent mt" id="missionStart" type="button" disabled>Сесть в электролабораторию</button>`;
-      const complete=new Set(),replace=screen.querySelector('#replaceTrainingMeter'),next=screen.querySelector('#missionStart');
-      const ready=()=>next.disabled=complete.size!==equipment.length;
-      screen.querySelectorAll('[data-mission-check]').forEach((button,i)=>button.onclick=()=>{
-        button.disabled=true;
-        button.nextElementSibling.textContent=i===3?'Дефект: батарея разряжена':'Проверено';
-        if(i===3)replace.hidden=false;else complete.add(i);
-        ready();
+      distance=0;lane=0;
+      panel.innerHTML=`<div class="mission-panel-head"><h2>Выезд на КТПН</h2><output id="missionCount" aria-label="Проверено">0 / 5</output></div>
+        <div class="mission-check">${equipment.map((name,i)=>`<button type="button" class="mission-item" data-mission-check="${i}">
+          <span>${name}</span><span data-mission-marker aria-hidden="true">○</span></button>`).join('')}
+          <button class="btn accent" id="missionStart" type="button" disabled>На выезд</button></div>
+        <p class="mission-message" role="status">Проверь комплект. В одном пункте есть неисправность.</p>`;
+      const complete=new Set(),next=panel.querySelector('#missionStart'),count=panel.querySelector('#missionCount'),message=panel.querySelector('.mission-message');
+      const descriptions=['Задание на учебный выезд принято.','Документы в комплекте.','Кабели в комплекте.','Средства защиты проверены.'];
+      panel.querySelectorAll('[data-mission-check]').forEach((button,i)=>{
+        let replace=false;
+        button.onclick=()=>{
+          const marker=button.querySelector('[data-mission-marker]');
+          if(i===4&&!replace){
+            replace=true;button.dataset.state='issue';marker.textContent='!';
+            button.firstElementChild.textContent='Заменить прибор';message.textContent='Батарея разряжена. Возьми исправный прибор.';
+            return;
+          }
+          complete.add(i);button.disabled=true;button.dataset.state='done';marker.textContent='✓';
+          if(i===4)button.firstElementChild.textContent='Прибор заменён';
+          count.textContent=`${complete.size} / ${equipment.length}`;
+          next.disabled=complete.size!==equipment.length;
+          message.textContent=next.disabled?(descriptions[i]||'Исправный прибор в комплекте.'):'Комплект готов к выезду.';
+        };
       });
-      replace.onclick=()=>{
-        complete.add(3);replace.hidden=true;
-        screen.querySelector('[data-mission-check="3"]+span').textContent='Заменён';
-        ready();
-      };
       next.onclick=()=>{stage=1;show();};
     }else if(stage===1){
-      screen.innerHTML=`<h2>Маршрут до учебного объекта</h2><p>Держись дороги. Повороты — стрелками или кнопками.</p>
-        <canvas class="mission-road" width="600" height="344" role="img" aria-label="Панорама учебного маршрута"></canvas>
+      canvas.setAttribute('aria-label','Трёхмерный маршрут электролаборатории');
+      panel.innerHTML=`
         <label class="mission-progress">До объекта <output>600 м</output><progress max="600" value="0"></progress></label>
         <div class="mission-controls"><button class="btn ghost" type="button" data-steer="-1" aria-label="Налево">←</button>
           <button class="btn accent" type="button" id="driveToggle" aria-pressed="false">Поехали</button>
           <button class="btn ghost" type="button" data-steer="1" aria-label="Направо">→</button></div>`;
-      drive(screen,()=>{stage=2;show();});
+      drive(()=>{stage=2;show();});
     }else if(stage===2){
-      screen.innerHTML=`<h2>Учебный объект</h2><p>Подтверждение допуска в учебном задании ещё не получено. Как поступишь?</p>
+      panel.innerHTML=`<h2>Учебный объект</h2><p>Допуск по учебному заданию ещё не подтверждён. Как поступишь?</p>
         <div class="mission-controls"><button class="btn ghost" type="button" data-unsafe>Начать сразу</button><button class="btn accent" type="button" data-safe>Дождаться подтверждения</button></div>
-        <p role="status"></p>`;
-      screen.querySelector('[data-unsafe]').onclick=()=>screen.querySelector('[role=status]').textContent='Сценарий остановлен. Сначала дождись подтверждения.';
-      screen.querySelector('[data-safe]').onclick=()=>{stage=3;show();};
+        <p class="mission-message" role="status"></p>`;
+      panel.querySelector('[data-unsafe]').onclick=()=>panel.querySelector('[role=status]').textContent='Сценарий остановлен. Сначала дождись подтверждения.';
+      panel.querySelector('[data-safe]').onclick=()=>{stage=3;show();};
     }else{
-      screen.innerHTML=`<h2>Выезд завершён</h2><p>Комплект проверен, неисправный прибор заменён, объект достигнут. Ты дождался подтверждения допуска.</p>
-        <button class="btn accent" type="button" id="restartMission">Пройти снова</button>`;
-      screen.querySelector('#restartMission').onclick=()=>{stage=0;show();};
+      panel.innerHTML=`<h2>Выезд завершён</h2><p>Комплект проверен. Неисправный прибор заменён. Допуск подтверждён.</p>
+        <button class="btn ghost" type="button" id="restartMission">Пройти снова</button>`;
+      panel.querySelector('#restartMission').onclick=()=>{stage=0;show();};
     }
+    paint();
   };
-  function drive(screen,arrive){
-    const canvas=screen.querySelector('canvas'),ctx=canvas.getContext('2d');
-    const toggle=screen.querySelector('#driveToggle'),output=screen.querySelector('output'),progress=screen.querySelector('progress');
-    let distance=0,lane=0,steer=0,moving=false,then=0;
+  function drive(arrive){
+    const toggle=panel.querySelector('#driveToggle'),output=panel.querySelector('output'),progress=panel.querySelector('progress');
+    let steer=0,moving=false,then=0,request=0;
     const flip=()=>{moving=!moving;toggle.textContent=moving?'Пауза':'Поехали';toggle.setAttribute('aria-pressed',String(moving));};
     toggle.onclick=flip;
-    for(const button of screen.querySelectorAll('[data-steer]')){
+    for(const button of panel.querySelectorAll('[data-steer]')){
       button.onpointerdown=event=>{button.setPointerCapture(event.pointerId);steer=Number(button.dataset.steer);};
       button.onpointerup=button.onpointercancel=()=>{steer=0;};
       button.onclick=event=>{if(!event.detail)lane+=Number(button.dataset.steer)*.12;};
@@ -267,39 +294,23 @@ function viewFieldMission(role) {
       event.preventDefault();steer=event.type==='keyup'?0:event.key==='ArrowLeft'?-1:1;
     };
     document.addEventListener('keydown',key);document.addEventListener('keyup',key);
-    const cleanup=()=>{document.removeEventListener('keydown',key);document.removeEventListener('keyup',key);};
-    const bend=z=>Math.sin(z/70)*1.2+Math.sin(z/30)*.18;
-    const poly=(color,points)=>{
-      ctx.fillStyle=color;ctx.beginPath();
-      points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
-      ctx.closePath();ctx.fill();
+    const cleanup=()=>{
+      cancelAnimationFrame(request);
+      document.removeEventListener('keydown',key);document.removeEventListener('keyup',key);
+      window.removeEventListener('hashchange',cleanup);
     };
+    window.addEventListener('hashchange',cleanup,{once:true});
     function frame(now){
       if(!canvas.isConnected){cleanup();return;}
       const dt=Math.min(.05,(now-(then||now))/1000);then=now;
       lane=Math.max(-1.74,Math.min(1.74,lane+steer*dt*1.4));
-      if(moving)distance+=dt*(Math.abs(lane)>1.05?14:35);
+      if(moving)distance=Math.min(600,distance+dt*(Math.abs(lane)>1.05?14:35));
       output.textContent=`${Math.max(0,Math.ceil(600-distance))} м`;progress.value=distance;
-      ctx.fillStyle='#9eb9c9';ctx.fillRect(0,0,600,96);
-      ctx.fillStyle='#e9eef0';ctx.fillRect(0,96,600,248);
-      const center=depth=>300+(bend(distance+depth)-bend(distance))*620/(depth+6)-lane*700/(depth+7)*3;
-      for(let depth=159;depth>0;depth--){
-        const y=96+2050/(depth+7),nextY=96+2050/(depth+6),width=1080/(depth+7),nextWidth=1080/(depth+6);
-        const x=center(depth),nextX=center(depth-1),stripe=Math.floor((distance+depth)/8)%2;
-        poly(stripe?'#435569':'#4f6275',[[x-width,y],[x+width,y],[nextX+nextWidth,nextY],[nextX-nextWidth,nextY]]);
-        if(stripe)poly('#e9d0a0',[[x-width*.018,y],[x+width*.018,y],[nextX+nextWidth*.018,nextY],[nextX-nextWidth*.018,nextY]]);
-        if((Math.floor(distance)+depth)%13===0){
-          for(const side of [-1,1]){
-            const tree=x+side*width*1.62;
-            poly('#34565c',[[tree-width*.26,y],[tree,y-width*.92],[tree+width*.26,y]]);
-          }
-        }
-      }
-      poly('#183359',[[227,344],[241,317],[359,317],[373,344]]);ctx.fillStyle='#e2ad43';ctx.fillRect(284,312,32,6);
+      if(moving||steer)paint();
       if(distance>=600){cleanup();arrive();return;}
-      requestAnimationFrame(frame);
+      request=requestAnimationFrame(frame);
     }
-    requestAnimationFrame(frame);
+    request=requestAnimationFrame(frame);
   }
   show();
 }
