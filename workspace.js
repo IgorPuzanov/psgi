@@ -153,13 +153,46 @@ function viewReferences(role,id) {
   });
 }
 
+const scheduleMonth=item=>Number(item.sourceRow?.match(/месяц (\d{1,2})$/)?.[1]||item.start.slice(5,7));
+const schedulePerson=item=>[item.subject,item.role].join('\u0000');
+function scheduleGrid(entries,day,planLabel,sourceButton) {
+  const people=new Map();
+  for(const item of entries){
+    const key=schedulePerson(item);
+    if(!people.has(key))people.set(key,[]);
+    people.get(key).push(item);
+  }
+  const monthly=entries[0].category!=='Дежурства'&&[...people.values()].some(list=>list.length>1);
+  const cell=(item,kind)=>{
+    const value=kind==='plan'?planLabel(item):item.done?fmtDate(item.done):'—';
+    return `<button type="button" class="sheet-cell ${kind} ${kind==='fact'&&item.done?'filled':''}" data-sheet-cell="${kind}"
+      data-schedule-id="${esc(item.id)}" aria-label="${kind==='plan'?'План':'Факт'}, ${esc(item.subject)}, ${fmtDate(item.start)}">${value}</button>`;
+  };
+  const subject=item=>`<strong>${esc(item.subject)}</strong>${item.role?`<small>${esc(item.role)}</small>`:''}`;
+  const metadata=item=>`<span class="schedule-status ${scheduleState(item,day)}">${scheduleStates[scheduleState(item,day)]}</span>
+    ${item.previous?`<small>Предыдущий срок ${fmtDate(item.previous)}</small>`:''}${item.note?`<small>${esc(item.note)}</small>`:''}
+    ${item.sourceRow?`<small>${esc(item.sourceRow)}</small>`:''}${sourceButton(item.source)}
+    <button type="button" class="sheet-history" data-schedule-history="${esc(item.id)}">История</button>`;
+  const months=monthly?Array.from({length:12},(_,i)=>i+1):[];
+  const heading=monthly?`<tr><th rowspan="2" scope="col">Сотрудник / СИЗ</th>${months.map(month=>
+    `<th scope="colgroup" colspan="2">${new Date(2020,month-1,1).toLocaleDateString('ru-RU',{month:'long'})}</th>`).join('')}<th rowspan="2" scope="col">Примечания</th></tr>
+    <tr>${months.map(()=>'<th scope="col">План</th><th scope="col">Факт</th>').join('')}</tr>`:
+    '<tr><th scope="col">Сотрудник / СИЗ</th><th scope="col">План</th><th scope="col">Факт</th><th scope="col">Примечания</th></tr>';
+  const rows=monthly?[...people.values()].map(list=>`<tr><th scope="row">${subject(list[0])}</th>${months.map(month=>{
+    const occurrences=list.filter(item=>scheduleMonth(item)===month);
+    return `<td>${occurrences.map(item=>cell(item,'plan')).join('')}</td><td>${occurrences.map(item=>cell(item,'fact')).join('')}</td>`;
+  }).join('')}<td>${list.map(item=>`<div class="sheet-meta">${fmtDate(item.start)} · ${metadata(item)}</div>`).join('')}</td></tr>`):
+    entries.map(item=>`<tr><th scope="row">${subject(item)}</th><td>${cell(item,'plan')}</td><td>${cell(item,'fact')}</td><td>${metadata(item)}</td></tr>`);
+  return `<div class="sheet-scroll" tabindex="0" aria-label="Таблица графика"><table class="schedule-sheet ${monthly?'monthly-sheet':''}">
+    <thead>${heading}</thead><tbody>${rows.join('')}</tbody></table></div>`;
+}
+
 function viewSchedules(role,local=false) {
   const render=async panel=>{
     const {items,topics=[]}=await (local?localSchedules():serverRequest('/schedules'));
     if(!panel.isConnected)return;
     const day=workplaceDay();
     const initial=Math.max(2027,+day.slice(0,4));
-    let editor=null;
     panel.innerHTML=`${local?`<section class="card"><p>Графики и изменения хранятся в приложении на этом устройстве.</p>
       <label class="btn ghost file-btn">Загрузить файл графиков<input type="file" id="localScheduleImport" accept=".psgigraphs,application/json"></label>
       <p class="meta" id="localScheduleStatus" role="status">${items.length?`Сохранено записей: ${items.length}`:'Выберите файл «Графики ПСГИ».'}</p></section>`:''}
@@ -187,16 +220,12 @@ function viewSchedules(role,local=false) {
       (item.end||item.endTime?' — '+[fmtDate(item.end||item.start),item.endTime].filter(Boolean).join(' '):'');
     const sourceButton=name=>/^photo_2026-11-27_15-\d{2}-\d{2}\.jpg$/.test(name||'')?
       `<button class="btn ghost small" type="button" data-schedule-source="${esc(name)}">Фото источника</button>`:'';
-    const row=item=>{
-      const state=scheduleState(item,day);
-      return `<article class="schedule-row"><div><strong>${esc(item.subject)}</strong>${item.role?`<p class="meta">${esc(item.role)}</p>`:''}
-      <p>План ${planLabel(item)} · Факт ${item.done?fmtDate(item.done):'не внесён'}</p>
-      ${item.previous?`<p class="meta">Предыдущий срок ${fmtDate(item.previous)}</p>`:''}
-      ${item.note?`<p class="meta">${esc(item.note)}</p>`:''}${item.sourceRow?`<p class="meta">${esc(item.sourceRow)}</p>`:''}</div>
-      <span class="schedule-status ${state}">${scheduleStates[state]}</span><div class="actions">
-      ${!item.done&&!item.review&&!item.cancelled?`<button type="button" class="btn accent small" data-schedule-fact="${item.id}">Внести факт</button>`:''}
-      <button type="button" class="btn ghost small" data-schedule-edit="${item.id}">Изменить план и факт</button>
-      <button type="button" class="btn ghost small" data-schedule-history="${item.id}">История</button>${sourceButton(item.source)}</div></article>`;
+    const saveItem=async values=>{
+      const {item}=await (local?saveLocalSchedule(values):serverRequest('/schedules',{method:'POST',body:values}));
+      const index=items.findIndex(entry=>entry.id===item.id);
+      if(index<0)items.push(item);else items[index]=item;
+      if(![...year.options].some(option=>+option.value===item.year))year.add(new Option(item.year,item.year));
+      return item;
     };
     const draw=()=>{
       const selected=items.filter(item=>item.year===+year.value);
@@ -215,15 +244,14 @@ function viewSchedules(role,local=false) {
         `<details class="card schedule-group"><summary><strong>${esc(topic.title)}</strong></summary>
         ${topic.groups.map(group=>`<h3>${esc(group.label)}</h3><ul>${group.items.map(item=>`<li>${esc(item)}</li>`).join('')}</ul>`).join('')}
         ${sourceButton(topic.source)}</details>`).join('');
-      results.innerHTML=[...groups.values()].map(entries=>`<details class="card schedule-group" ${groups.size===1?'open':''}>
+      const open=new Map([...results.querySelectorAll('details[open]')].map(details=>[details.dataset.group,details.querySelector('.sheet-scroll').scrollLeft]));
+      results.innerHTML=[...groups.values()].map(entries=>`<details class="card schedule-group" data-group="${esc(entries[0].title)}" ${groups.size===1||open.has(entries[0].title)?'open':''}>
         <summary><small>${esc(entries[0].category)}</small><strong>${esc(entries[0].title)}</strong><span class="meta">Записей: ${entries.length}</span></summary>
-        ${entries.map(row).join('')}</details>`).join('')||`<p class="card meta">${selected.length?'По фильтрам ничего не найдено.':`На ${year.value} год записи ещё не внесены.`}</p>`;
+        ${scheduleGrid(entries,day,planLabel,sourceButton)}</details>`).join('')||`<p class="card meta">${selected.length?'По фильтрам ничего не найдено.':`На ${year.value} год записи ещё не внесены.`}</p>`;
+      results.querySelectorAll('details[open]').forEach(details=>{details.querySelector('.sheet-scroll').scrollLeft=open.get(details.dataset.group)||0;});
     };
-    const openEditor=(item,factOnly=false)=>{
-      editor=item;
-      edit.innerHTML=`<form class="card schedule-edit"><h2>${factOnly?'Внести факт':item?'Изменить запись':'Новая запись'}</h2>
-        ${factOnly?`<p><strong>${esc(item.subject)}</strong> · ${esc(item.title)}</p><p>План ${planLabel(item)}</p>
-          ${field('done','Фактическая дата','date',item.done,'required')}`:`
+    const openEditor=(item=null)=>{
+      edit.innerHTML=`<form class="card schedule-edit"><h2>Новая запись</h2>
         ${field('title','Полное название графика','text',item?.title,'required maxlength="240"')}
         ${field('year','Год графика','number',item?.year??year.value,'required min="2027" max="2100"')}
         <label class="field"><span class="lbl">Категория</span><select name="category">${scheduleCategories.map(category=>`<option ${item?.category===category?'selected':''}>${category}</option>`).join('')}</select></label>
@@ -235,7 +263,7 @@ function viewSchedules(role,local=false) {
         ${field('sourceRow','Строка источника','text',item?.sourceRow,'maxlength="240"')}
         <label class="field"><span class="lbl">Примечание</span><textarea name="note" maxlength="2000">${esc(item?.note||'')}</textarea></label>
         <label class="check"><input type="checkbox" name="cancelled" ${item?.cancelled?'checked':''}> Событие отменено</label>
-        <label class="check"><input type="checkbox" name="review" ${item?.review?'checked':''}> План требует сверки</label>`}
+        <label class="check"><input type="checkbox" name="review" ${item?.review?'checked':''}> План требует сверки</label>
         <div class="actions"><button class="btn accent">Сохранить</button><button class="btn ghost" type="button" id="closeScheduleEditor">Закрыть</button></div><p class="meta" role="status"></p></form>`;
       edit.scrollIntoView({block:'nearest'});
       edit.querySelector('#closeScheduleEditor').onclick=()=>edit.replaceChildren();
@@ -243,15 +271,10 @@ function viewSchedules(role,local=false) {
         event.preventDefault();
         const form=event.currentTarget, button=form.querySelector('[type=submit], button');
         const data=Object.fromEntries(new FormData(form));
-        const values=factOnly?{...editor,done:data.done}:{...data,year:+data.year,cancelled:data.cancelled==='on',review:data.review==='on'};
-        if(editor){values.id=editor.id;values.revision=editor.revision;}
+        const values={...data,year:+data.year,cancelled:data.cancelled==='on',review:data.review==='on'};
         button.disabled=true;
         try{
-          const result=await (local?saveLocalSchedule(values):serverRequest('/schedules',{method:'POST',body:values}));
-          const index=items.findIndex(entry=>entry.id===result.item.id);
-          if(index===-1)items.push(result.item);else items[index]=result.item;
-          if(![...year.options].some(option=>+option.value===result.item.year))year.add(new Option(result.item.year,result.item.year));
-          year.value=result.item.year;
+          year.value=(await saveItem(values)).year;
           edit.replaceChildren();draw();
         }catch(error){form.querySelector('[role=status]').textContent=error.message;}
         finally{button.disabled=false;}
@@ -269,7 +292,7 @@ function viewSchedules(role,local=false) {
     panel.querySelector('#scheduleState').onchange=draw;
     panel.querySelector('#scheduleSort').onchange=draw;
     panel.onclick=async event=>{
-      const {scheduleSource,scheduleEdit,scheduleHistory,scheduleFact}=event.target.dataset;
+      const {scheduleSource,scheduleHistory,scheduleId,sheetCell}=event.target.dataset;
       if(scheduleSource){
         const dialog=document.createElement('dialog');dialog.className='psgi-dialog schedule-source-dialog';
         dialog.innerHTML='<h2>Фото источника</h2><div role="status">Загрузка…</div><form method="dialog"><button class="btn ghost mt">Закрыть</button></form>';
@@ -284,9 +307,29 @@ function viewSchedules(role,local=false) {
         }catch(error){dialog.querySelector('[role=status]').textContent=error.message;}
         return;
       }
-      const item=items.find(entry=>entry.id===(scheduleEdit||scheduleHistory||scheduleFact));
+      const item=items.find(entry=>entry.id===(scheduleId||scheduleHistory));
       if(!item)return;
-      if(scheduleEdit||scheduleFact){openEditor(item,!!scheduleFact);return;}
+      if(sheetCell){
+        const button=event.target,form=document.createElement('form'),fact=sheetCell==='fact';
+        form.className='sheet-edit';
+        form.innerHTML=`${fact?field('done','Дата факта','date',item.done,'required'):
+          field('start','Начало','date',item.start,'required')+field('end','Конец','date',item.end)+
+          (item.startTime||item.endTime||item.category==='Дежурства'?field('startTime','С','time',item.startTime)+field('endTime','До','time',item.endTime):'')+
+          `<label><input type="checkbox" name="review" ${item.review?'checked':''}> На сверке</label><label><input type="checkbox" name="cancelled" ${item.cancelled?'checked':''}> Отменено</label>`}
+          <div class="sheet-edit-actions"><button class="btn accent small" type="submit">Сохранить</button><button class="btn ghost small" type="reset">Отмена</button></div><small role="status"></small>`;
+        button.replaceWith(form);form.querySelector('input').focus({preventScroll:true});
+        form.onreset=event=>{event.preventDefault();form.replaceWith(button);button.focus();};
+        form.onkeydown=event=>{if(event.key==='Escape')form.reset();};
+        form.onsubmit=async event=>{
+          event.preventDefault();
+          const data=Object.fromEntries(new FormData(form)),submit=form.querySelector('[type=submit]');
+          submit.disabled=true;
+          try{await saveItem(fact?{...item,done:data.done}:{...item,...data,review:data.review==='on',cancelled:data.cancelled==='on'});draw();}
+          catch(error){form.querySelector('[role=status]').textContent=error.message;}
+          finally{submit.disabled=false;}
+        };
+        return;
+      }
       const dialog=document.createElement('dialog');dialog.className='psgi-dialog';
       dialog.innerHTML='<h2>История изменений</h2><div role="status">Загрузка…</div><form method="dialog"><button class="btn ghost mt">Закрыть</button></form>';
       document.body.append(dialog);dialog.showModal();dialog.onclose=()=>dialog.remove();
@@ -334,7 +377,7 @@ function widgetOrder(user,items) {
 }
 
 async function populateHomeWorkspace(role,hello) {
-  const panel=$('#homeWorkspace'),issue=$('#homeIssue'),greeting=$('#homeGreeting');
+  const panel=$('#homeWorkspace'),greeting=$('#homeGreeting');
   const user=await workspaceIdentity().catch(()=>null);
   if(!panel.isConnected)return;
   localSchedules().then(({items})=>{
@@ -358,7 +401,6 @@ async function populateHomeWorkspace(role,hello) {
     }
   }
   if(workspaceRole(user)){
-    issue.hidden=false;issue.href=`#/${user.role}/new`;
     panel.innerHTML=`<div id="homeReminders"></div>`;
     serverRequest('/schedules',{signal:AbortSignal.timeout(7000)}).then(({items})=>{
       const slot=panel.querySelector('#homeReminders');

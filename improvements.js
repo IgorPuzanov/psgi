@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_RELEASE = 'psgi-2026-11-27-v25.14';
+const APP_RELEASE = 'psgi-2026-11-27-v25.15';
 const RELEASE_NOTES = [
   'Телефоны и инструкции по охране труда доступны с главной и из раздела «Информация».',
   'В заявке начальника можно выбрать инструкции, посмотреть общий черновик и распечатать его после сохранения.',
@@ -339,10 +339,10 @@ function viewBackup(role) {
 
 function viewReleases(role) {
   header('Что нового в ПСГИ', `/${role}/more`);
-  app.innerHTML = `<div class="card"><p class="meta">27.11.2026</p><h2>ПСГИ · 25.14</h2><ul>
-    <li>Новая шапка и заставка с утверждённым логотипом, компактные действия на главной.</li>
-    <li>Шпаргалки с поиском и предпросмотром, графики с контролем сроков и историей.</li>
-    <li>Рабочий профиль и управление доступом к новым серверным разделам.</li></ul>
+  app.innerHTML = `<div class="card"><p class="meta">27.11.2026</p><h2>ПСГИ · 25.15</h2><ul>
+    <li>Рабочие столы мастера и начальника, ежедневник с датами и диктовкой.</li>
+    <li>Графики с редактированием плана и факта прямо в таблице.</li>
+    <li>Геолокация в разделе карт и первая миссия «Учебный выезд».</li></ul>
     <details><summary>Ранние обновления</summary><ul>${RELEASE_NOTES.map(n => `<li>${esc(n)}</li>`).join('')}</ul></details></div>`;
   lsSet('psgiSeenRelease', APP_RELEASE);
 }
@@ -465,7 +465,7 @@ async function enhancePage(role, parts) {
     if (lsGet('psgiSeenRelease') !== APP_RELEASE) {
       lsSet('psgiSeenRelease', APP_RELEASE);
       const notice=document.createElement('details');notice.className='release-notice';
-      notice.innerHTML=`<summary>Что нового</summary><div><p>Обновлён рабочий стол. Добавлены шпаргалки и графики.</p><a href="#/${role}/releases">Все изменения</a></div>`;
+      notice.innerHTML=`<summary>Что нового</summary><div><p>Ежедневник, графики в таблицах и учебный выезд.</p><a href="#/${role}/releases">Все изменения</a></div>`;
       app.append(notice);
     }
     const reset = $('#reset'); if (reset) reset.remove();
@@ -504,6 +504,13 @@ async function router() {
     else if (parts[1] === 'reference') viewReferences(role,parts[2]);
     else if (parts[1] === 'schedules') viewSchedules(role);
     else if (parts[1] === 'local-schedules') viewSchedules(role,true);
+    else if (parts[1] === 'map-location') viewMapLocation(role);
+    else if (parts[1] === 'documents') {
+      header('Документация','/');
+      app.innerHTML=`<div class="tiles">${tile(`#/${role}/reglament`,'book','Регламент')}
+        ${tile(`#/${role}/guides`,'book','Типовые работы')}${tile(`#/${role}/instructions`,'book','Инструкции')}
+        ${tile(`#/${role}/manuals`,'meter','Руководства и паспорта приборов')}${tile('#/e/tb','book','Правила охраны труда')}</div>`;
+    }
     else if (parts[1] === 'archive') await viewWorkspaceArchive(role);
     else if (parts[1] === 'instructions' && ['h', 'e', 'b', 'm'].includes(role)) viewSafetyLibrary(role);
     else if (parts[1] === 'materials' && ['h', 'e', 'b', 'm'].includes(role)) viewPrivateMaterials(role);

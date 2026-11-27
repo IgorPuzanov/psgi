@@ -184,10 +184,12 @@ function viewGames(role, which) {
   if (which === 'blocks') return viewBlocks(role);
   if (which === 'solitaire') return viewSolitaire(role);
   if (which === 'chess') return viewChess(role);
+  if (which === 'field-mission') return viewFieldMission(role);
   header('Игры', role === 'h' ? '/' : '/' + role);
   const sc = jget('gameScores', {}), list = Object.entries(sc).sort((a, b) => b[1].pts - a[1].pts);
   const names = [...new Set([...getStaff(), ...Object.keys(sc)])];
-  app.innerHTML = `<div class="card"><label class="field"><span class="lbl">Кто играет</span><select id="gPlayer"><option value="">— выберите —</option>${names.map(n => `<option ${n === player() ? 'selected' : ''}>${esc(n)}</option>`).join('')}<option value="__new">+ Новый игрок…</option></select></label></div>
+  app.innerHTML = `<a class="card task mission-entry" href="#/${role}/games/field-mission"><div class="obj">ПСГИ · Учебный выезд</div><p class="meta">Подготовь лабораторию, доедь до учебного объекта и закрой тренировочное задание.</p></a>
+    <div class="card"><label class="field"><span class="lbl">Кто играет</span><select id="gPlayer"><option value="">— выберите —</option>${names.map(n => `<option ${n === player() ? 'selected' : ''}>${esc(n)}</option>`).join('')}<option value="__new">+ Новый игрок…</option></select></label></div>
     <a class="card task" href="#/${role}/games/snake"><div class="obj">🐍 Змейка</div><p class="meta">Яблоко — 1 очко.</p></a>
     <a class="card task" href="#/${role}/games/blocks"><div class="obj">🧱 Кирпичики</div><p class="meta">Собранный ряд — очки.</p></a>
     <a class="card task" href="#/${role}/games/solitaire"><div class="obj">🃏 Косынка</div><p class="meta">Пасьянс. Победа — 50 очков.</p></a>
@@ -200,6 +202,106 @@ function viewGames(role, which) {
     if (v === '__new') { v = (await askText('Новый игрок', '', '', 'Имя') || '').trim(); if (!v) { viewGames(role); return; } }
     lsSet('player', v); viewGames(role);
   };
+}
+
+function viewFieldMission(role) {
+  header('Учебный выезд',`/${role}/games`);
+  const screen=document.createElement('section');
+  screen.className='field-mission card';
+  app.replaceChildren(screen);
+  let stage=0;
+  const equipment=['Задание и документы','Средства защиты','Кабели','Прибор'];
+  const show=()=>{
+    if(stage===0){
+      screen.innerHTML=`<h2>Миссия 001 · Выезд на КТПН</h2><p>Стажёр, проверь комплект перед выездом. Один предмет неисправен.</p>
+        <ul class="mission-check">${equipment.map((name,i)=>`<li><button type="button" class="btn ghost" data-mission-check="${i}">${name}</button><span aria-live="polite"></span></li>`).join('')}</ul>
+        <button class="btn ghost" id="replaceTrainingMeter" type="button" hidden>Заменить прибор</button>
+        <button class="btn accent mt" id="missionStart" type="button" disabled>Сесть в электролабораторию</button>`;
+      const complete=new Set(),replace=screen.querySelector('#replaceTrainingMeter'),next=screen.querySelector('#missionStart');
+      const ready=()=>next.disabled=complete.size!==equipment.length;
+      screen.querySelectorAll('[data-mission-check]').forEach((button,i)=>button.onclick=()=>{
+        button.disabled=true;
+        button.nextElementSibling.textContent=i===3?'Дефект: батарея разряжена':'Проверено';
+        if(i===3)replace.hidden=false;else complete.add(i);
+        ready();
+      });
+      replace.onclick=()=>{
+        complete.add(3);replace.hidden=true;
+        screen.querySelector('[data-mission-check="3"]+span').textContent='Заменён';
+        ready();
+      };
+      next.onclick=()=>{stage=1;show();};
+    }else if(stage===1){
+      screen.innerHTML=`<h2>Маршрут до учебного объекта</h2><p>Держись дороги. Повороты — стрелками или кнопками.</p>
+        <canvas class="mission-road" width="600" height="344" role="img" aria-label="Панорама учебного маршрута"></canvas>
+        <label class="mission-progress">До объекта <output>600 м</output><progress max="600" value="0"></progress></label>
+        <div class="mission-controls"><button class="btn ghost" type="button" data-steer="-1" aria-label="Налево">←</button>
+          <button class="btn accent" type="button" id="driveToggle" aria-pressed="false">Поехали</button>
+          <button class="btn ghost" type="button" data-steer="1" aria-label="Направо">→</button></div>`;
+      drive(screen,()=>{stage=2;show();});
+    }else if(stage===2){
+      screen.innerHTML=`<h2>Учебный объект</h2><p>Подтверждение допуска в учебном задании ещё не получено. Как поступишь?</p>
+        <div class="mission-controls"><button class="btn ghost" type="button" data-unsafe>Начать сразу</button><button class="btn accent" type="button" data-safe>Дождаться подтверждения</button></div>
+        <p role="status"></p>`;
+      screen.querySelector('[data-unsafe]').onclick=()=>screen.querySelector('[role=status]').textContent='Сценарий остановлен. Сначала дождись подтверждения.';
+      screen.querySelector('[data-safe]').onclick=()=>{stage=3;show();};
+    }else{
+      screen.innerHTML=`<h2>Выезд завершён</h2><p>Комплект проверен, неисправный прибор заменён, объект достигнут. Ты дождался подтверждения допуска.</p>
+        <button class="btn accent" type="button" id="restartMission">Пройти снова</button>`;
+      screen.querySelector('#restartMission').onclick=()=>{stage=0;show();};
+    }
+  };
+  function drive(screen,arrive){
+    const canvas=screen.querySelector('canvas'),ctx=canvas.getContext('2d');
+    const toggle=screen.querySelector('#driveToggle'),output=screen.querySelector('output'),progress=screen.querySelector('progress');
+    let distance=0,lane=0,steer=0,moving=false,then=0;
+    const flip=()=>{moving=!moving;toggle.textContent=moving?'Пауза':'Поехали';toggle.setAttribute('aria-pressed',String(moving));};
+    toggle.onclick=flip;
+    for(const button of screen.querySelectorAll('[data-steer]')){
+      button.onpointerdown=event=>{button.setPointerCapture(event.pointerId);steer=Number(button.dataset.steer);};
+      button.onpointerup=button.onpointercancel=()=>{steer=0;};
+      button.onclick=event=>{if(!event.detail)lane+=Number(button.dataset.steer)*.12;};
+    }
+    const key=event=>{
+      if(!canvas.isConnected||!['ArrowLeft','ArrowRight'].includes(event.key))return;
+      event.preventDefault();steer=event.type==='keyup'?0:event.key==='ArrowLeft'?-1:1;
+    };
+    document.addEventListener('keydown',key);document.addEventListener('keyup',key);
+    const cleanup=()=>{document.removeEventListener('keydown',key);document.removeEventListener('keyup',key);};
+    const bend=z=>Math.sin(z/70)*1.2+Math.sin(z/30)*.18;
+    const poly=(color,points)=>{
+      ctx.fillStyle=color;ctx.beginPath();
+      points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
+      ctx.closePath();ctx.fill();
+    };
+    function frame(now){
+      if(!canvas.isConnected){cleanup();return;}
+      const dt=Math.min(.05,(now-(then||now))/1000);then=now;
+      lane=Math.max(-1.74,Math.min(1.74,lane+steer*dt*1.4));
+      if(moving)distance+=dt*(Math.abs(lane)>1.05?14:35);
+      output.textContent=`${Math.max(0,Math.ceil(600-distance))} м`;progress.value=distance;
+      ctx.fillStyle='#9eb9c9';ctx.fillRect(0,0,600,96);
+      ctx.fillStyle='#e9eef0';ctx.fillRect(0,96,600,248);
+      const center=depth=>300+(bend(distance+depth)-bend(distance))*620/(depth+6)-lane*700/(depth+7)*3;
+      for(let depth=159;depth>0;depth--){
+        const y=96+2050/(depth+7),nextY=96+2050/(depth+6),width=1080/(depth+7),nextWidth=1080/(depth+6);
+        const x=center(depth),nextX=center(depth-1),stripe=Math.floor((distance+depth)/8)%2;
+        poly(stripe?'#435569':'#4f6275',[[x-width,y],[x+width,y],[nextX+nextWidth,nextY],[nextX-nextWidth,nextY]]);
+        if(stripe)poly('#e9d0a0',[[x-width*.018,y],[x+width*.018,y],[nextX+nextWidth*.018,nextY],[nextX-nextWidth*.018,nextY]]);
+        if((Math.floor(distance)+depth)%13===0){
+          for(const side of [-1,1]){
+            const tree=x+side*width*1.62;
+            poly('#34565c',[[tree-width*.26,y],[tree,y-width*.92],[tree+width*.26,y]]);
+          }
+        }
+      }
+      poly('#183359',[[227,344],[241,317],[359,317],[373,344]]);ctx.fillStyle='#e2ad43';ctx.fillRect(284,312,32,6);
+      if(distance>=600){cleanup();arrive();return;}
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+  show();
 }
 let gameTimer = null, gameKeys = null;
 function stopGame() {

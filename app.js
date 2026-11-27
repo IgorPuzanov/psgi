@@ -213,7 +213,9 @@ function toast(msg) {
   clearTimeout(toast.tm); toast.tm = setTimeout(() => t.classList.remove('show'), 2800);
 }
 function header(title, back) {
-  $('#title').textContent = title;
+  const brand=$('#topBrand'),heading=$('#title');
+  if(brand)brand.hidden=true;
+  heading.hidden=false;heading.textContent=title;
   const b = $('#backBtn');
   b.hidden = !back;
   b.onclick = () => { location.hash = back; };
@@ -511,8 +513,9 @@ function positionHTML(latitude, longitude, accuracy) {
   if (!validWeatherLocation(coords)) return '';
   const lat=coords.latitude.toFixed(5), lon=coords.longitude.toFixed(5);
   const precision=accuracy!=null&&Number.isFinite(Number(accuracy))?' · точность около '+Math.round(accuracy)+' м':'';
-  return `<span>Координаты: ${lat}, ${lon}${precision}</span> <a href="https://yandex.ru/maps/?pt=${lon},${lat}&amp;z=15&amp;l=map" target="_blank" rel="noopener noreferrer">Посмотреть на карте</a>`;
+  return `<span>Координаты: ${lat}, ${lon}${precision}</span> <a href="${esc(yandexPositionUrl(coords))}" target="_blank" rel="noopener noreferrer">Посмотреть на карте</a>`;
 }
+const yandexPositionUrl=({latitude,longitude})=>`https://yandex.ru/maps/?pt=${longitude.toFixed(5)},${latitude.toFixed(5)}&z=15&l=map`;
 async function weatherPosition() {
   const coords=await getPos();
   return {latitude:coords.latitude,longitude:coords.longitude,accuracy:coords.accuracy,place:coords.latitude.toFixed(3)+', '+coords.longitude.toFixed(3),city:''};
@@ -531,7 +534,7 @@ async function homeWeather(mode) {
     let granted=false;try{granted=(await navigator.permissions?.query({name:'geolocation'}))?.state==='granted';}catch{}
     if(granted)c=await weatherPosition();
   }
-  if(!validWeatherLocation(c))throw new Error('Укажи город в блоке погоды или нажми «Где я нахожусь».');
+  if(!validWeatherLocation(c))throw new Error('Укажи город в блоке погоды.');
   const key=c.latitude.toFixed(3)+','+c.longitude.toFixed(3);
   lsSet('weatherLocation',JSON.stringify(c));
   if(!isOnline()) throw new Error('Местоположение сохранено. Для загрузки погоды нужен интернет.');
@@ -560,47 +563,82 @@ function weatherHTML(w,notice='') {
   if (validWeatherLocation(position)&&w?.locationKey&&w.locationKey!==position.latitude.toFixed(3)+','+position.longitude.toFixed(3)) w=null;
   const valid=w&&Number.isFinite(w.t),stale=valid&&Date.now()-w.at>=30*60e3;
   const body=valid?`${icon(wIcon(w.code))}<span><b>${w.t>0?'+':''}${w.t}°</b><small>${esc(w.place||'здесь')}</small><small>${Number.isFinite(w.pressure)?w.pressure+' мм рт. ст.':'Давление —'}</small><small>${Number.isFinite(w.humidity)?'Влажность '+w.humidity+'%':'Влажность —'}</small></span>`:`${icon('pin')}<span>Погода —<small>Давление —</small><small>Влажность —</small><small>Указать город</small></span>`;
-  return `<button type="button" class="hw hw-set" data-hw="city" title="Выбрать город">${body}</button>${position?`<p class="meta">${positionHTML(position.latitude,position.longitude,position.accuracy)}</p>`:''}<small class="weather-time">${valid?`${stale?'Сохранено':'Загружено'} ${esc(new Date(w.at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}))}`:'Выбери город один раз'}</small><div class="weather-actions"><button type="button" data-hw="refresh">Обновить</button><button type="button" data-hw="locate">Где я нахожусь</button></div><p class="weather-status" role="status">${esc(notice)}</p>`;
+  return `<button type="button" class="hw hw-set" data-hw="city" title="Выбрать город">${body}</button><small class="weather-time">${valid?`${stale?'Сохранено':'Загружено'} ${esc(new Date(w.at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}))}`:'Выбери город один раз'}</small><div class="weather-actions"><button type="button" data-hw="refresh">Обновить погоду</button></div><p class="weather-status" role="status">${esc(notice)}</p>`;
 }
 function viewRoles() {
   header('ПСГИ', null);
-  const role = currentRole();
+  $('#topBrand').hidden=false;$('#title').hidden=true;
+  const role = lsGet('workspaceDesk')==='b'?'b':'m';
+  lsSet('role',role);
   const d = new Date(), h = d.getHours();
   const hello = h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер';
   const link = (href, ic, title, caption = '', primary = false) =>
     `<a class="dashboard-link${primary ? ' primary' : ''}" href="#${href}">
       ${icon(ic)}<strong>${title}</strong>${caption ? `<small>${caption}</small>` : ''}</a>`;
   app.innerHTML = `
-    <section class="dashboard-hero" aria-label="Производственная служба грозозащиты и изоляции">
-      <div class="home-logo-panel"><img class="psgi-logo" src="psgi-logo-approved.png" alt="ПСГИ — Производственная служба грозозащиты и изоляции" width="791" height="290"></div>
-      <a class="home-profile" href="#/${role}/connection" aria-label="Рабочий профиль">${icon('people')}</a>
-    </section>
+    <div class="desk-select"><span>Рабочий стол</span><div role="group" aria-label="Рабочий стол">
+      <button type="button" data-workspace-desk="m" aria-pressed="${role==='m'}">Мастер</button>
+      <button type="button" data-workspace-desk="b" aria-pressed="${role==='b'}">Начальник</button>
+    </div></div>
     <section class="home-hello"><div><p class="hh-day">${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS_GEN[d.getMonth()]} ${d.getFullYear()}</p>
       <h2 id="homeGreeting">${hello}</h2></div>
       <div id="homeW">${weatherHTML(jget('homeW', null))}</div></section>
-    <div class="dashboard-utilities">
-      <a class="btn ghost" href="#/h/phones">${icon('phone')} Телефонный справочник</a>
-    </div>
+    <section id="dailyNotes" class="card daily-notes" aria-label="Ежедневник"></section>
     <nav class="dashboard-grid home-actions" aria-label="Задания">
-      <a class="dashboard-link primary" id="homeIssue" href="#/b/new" hidden>${icon('clipboard')}<strong>Выдать задание</strong></a>
-      ${link('/e', 'permit', 'Выполнение задания')}
+      ${link('/'+role+'/new','clipboard','Выдать задание','Работы, бригада и инструктаж',true)}
+      ${link('/'+role+'/instructions','book','Инструктирование','Инструкции и инструктажи')}
     </nav>
-    <nav class="dashboard-grid home-directories" aria-label="Быстрый доступ">
+    <nav class="dashboard-grid home-directories" aria-label="Рабочие разделы">
+      ${link('/'+role+'/docs/permit','permit','Наряд-допуск')}
+      ${link('/h/phones','phone','Телефонный справочник')}
+      ${link('/'+role+'/registers','clipboard','Журналы')}
+      ${link('/'+role+'/documents','book','Документация')}
       ${link('/' + role + '/docs/info', 'info', 'Информация для ознакомления')}
+      ${link('/h/local-schedules','meter','Графики')}
+      ${link('/'+role+'/devices','meter','Приборы и поверка')}
+      ${link('/'+role+'/monthly','clipboard','Нормированное задание')}
+    </nav>
+    <nav class="dashboard-grid home-directories" aria-label="Другие разделы">
+      ${link('/'+role,'permit','Журнал заявок')}
+      ${link('/h/map-location','pin','Карты и геолокация')}
+      ${link('/h/games', 'game', 'Игры')}
     </nav>
     <div id="homeWorkspace"></div>
     ${bdayBannerHTML()}
     <p class="home-note">Заявки и протоколы этого устройства доступны в «Разделы → Данные и копии» для переноса.</p>`;
   populateHomeWorkspace(role,hello);
+  bindDailyNotes($('#dailyNotes'));
+  app.querySelectorAll('[data-workspace-desk]').forEach(button=>button.onclick=()=>{
+    lsSet('workspaceDesk',button.dataset.workspaceDesk);
+    router();
+  });
   const weatherBox=$('#homeW');let weatherPaint=0;
   const paintWeather=async mode=>{
     const sequence=++weatherPaint;
-    weatherBox.innerHTML=weatherHTML(jget('homeW',null),mode==='locate'?'Определяем место телефона, до 25 секунд…':mode==='city'?'Выбор города…':'Обновляем погоду…');
+    weatherBox.innerHTML=weatherHTML(jget('homeW',null),mode==='city'?'Выбор города…':'Обновляем погоду…');
     try{const w=await homeWeather(mode);if(weatherBox.isConnected&&sequence===weatherPaint)weatherBox.innerHTML=weatherHTML(w,!isOnline()?'Нет интернета. Последние сохранённые данные.':mode&&w?'Погода обновлена.':'');}
     catch(error){if(weatherBox.isConnected&&sequence===weatherPaint)weatherBox.innerHTML=weatherHTML(jget('homeW',null),error.message);}
   };
   weatherBox.onclick=e=>{const button=e.target.closest('[data-hw]');if(button)paintWeather(button.dataset.hw);};
   paintWeather();
+}
+
+function viewMapLocation(role) {
+  header('Карты и геолокация',role==='h'?'/':`/${role}/more`);
+  app.innerHTML=`<section class="card"><h2>Моё местоположение</h2>
+    <button class="btn accent" type="button" id="mapLocate">Где я нахожусь</button>
+    <p class="meta" id="mapLocationStatus" role="status">После разрешения откроется точка в Яндекс Картах.</p>
+    <a class="btn ghost small" href="https://yandex.ru/maps/" target="_blank" rel="noopener noreferrer">Открыть Яндекс Карты</a></section>
+    <a class="btn ghost" href="#/h/kusty">Карты месторождений</a>`;
+  const button=$('#mapLocate'),status=$('#mapLocationStatus');
+  button.onclick=async()=>{
+    button.disabled=true;status.textContent='Определяю местоположение…';
+    try{
+      const position=await getPos();
+      if(button.isConnected)window.location.assign(yandexPositionUrl(position));
+    }catch(error){if(status.isConnected)status.textContent=error.message;}
+    finally{button.disabled=false;}
+  };
 }
 
 const byNew = (a, b) => (b.created || 0) - (a.created || 0);
@@ -2144,7 +2182,7 @@ function routeCore() {
   viewRoles();
 }
 
-const PSGI_SW_VERSION = '25.14';
+const PSGI_SW_VERSION = '25.15';
 
 async function startApp() {
   const splashVisible = $('#launchSplash')?.hidden === false;
