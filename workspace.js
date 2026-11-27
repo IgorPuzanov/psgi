@@ -6,14 +6,17 @@ const workplaceDay=(date=new Date())=>{
   return ['year','month','day'].map(key=>pieces.find(piece=>piece.type===key).value).join('-');
 };
 const daysTo=(from,to)=>Math.round((Date.parse(to)-Date.parse(from))/86400000);
-function scheduleState(item,day=workplaceDay()) {
+const workplaceTime=(date=new Date())=>new Intl.DateTimeFormat('ru-RU',{timeZone:'Asia/Yekaterinburg',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(date);
+function scheduleState(item,day=workplaceDay(),time=workplaceTime()) {
   if (item.cancelled) return 'cancelled';
   if (item.done) return 'done';
-  if ((item.end||item.start)<day) return 'late';
-  if (item.start<day) return 'active';
+  if (item.review) return 'review';
+  const end=item.end||item.start;
+  if (end<day||end===day&&item.endTime&&item.endTime<=time) return 'late';
+  if (item.start<day||item.start===day&&item.startTime&&item.startTime<=time) return 'active';
   return daysTo(day,item.start)<=3?'soon':'planned';
 }
-const scheduleStates={soon:'Ближайшие',late:'Просрочено',active:'Идёт',planned:'Запланировано',done:'Выполнено',cancelled:'Отменено'};
+const scheduleStates={soon:'Ближайшие',late:'Просрочено',active:'Идёт',planned:'Запланировано',done:'Выполнено',review:'На сверке',cancelled:'Отменено'};
 const scheduleCategories=['Проверка знаний','Инструктажи','Тренировки','СИЗ','Дежурства','Другое'];
 
 async function workspaceIdentity() {
@@ -152,7 +155,7 @@ function viewReferences(role,id) {
 
 function viewSchedules(role) {
   protectedWorkspace(role,'Графики',`/${role}/more`,async panel=>{
-    const {items}=await serverRequest('/schedules');
+    const {items,topics=[]}=await serverRequest('/schedules');
     if(!panel.isConnected)return;
     const day=workplaceDay();
     const initial=Math.max(2027,+day.slice(0,4));
@@ -163,14 +166,23 @@ function viewSchedules(role) {
       <section class="card schedule-filters"><label class="field"><span class="lbl">Поиск по графикам</span><input id="scheduleQuery" type="search" placeholder="ФИО, СИЗ или название"></label>
       <label class="field"><span class="lbl">Статус</span><select id="scheduleState"><option value="">Все статусы</option>${Object.entries(scheduleStates).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')}</select></label>
       <label class="field"><span class="lbl">Сортировка</span><select id="scheduleSort"><option value="start">По сроку</option><option value="subject">По сотруднику или СИЗ</option></select></label></section>
-      <div id="scheduleList"></div>`;
+      <div id="scheduleTopics"></div><div id="scheduleList"></div>`;
     const year=panel.querySelector('#scheduleYear'), results=panel.querySelector('#scheduleList'), edit=panel.querySelector('#scheduleEditor');
     const field=(name,label,type,value='',attrs='')=>`<label class="field"><span class="lbl">${label}</span><input name="${name}" type="${type}" value="${esc(value)}" ${attrs}></label>`;
+    const planLabel=item=>[fmtDate(item.start),item.startTime].filter(Boolean).join(' ')+
+      (item.end||item.endTime?' — '+[fmtDate(item.end||item.start),item.endTime].filter(Boolean).join(' '):'');
+    const sourceButton=name=>/^photo_2026-11-27_15-\d{2}-\d{2}\.jpg$/.test(name||'')?
+      `<button class="btn ghost small" type="button" data-schedule-source="${esc(name)}">Фото источника</button>`:'';
     const row=item=>{
       const state=scheduleState(item,day);
-      return `<article class="schedule-row"><div><strong>${esc(item.subject)}</strong><p>План ${fmtDate(item.start)}${item.end?' — '+fmtDate(item.end):''} · Факт ${item.done?fmtDate(item.done):'—'}</p>
-      ${item.note?`<p class="meta">${esc(item.note)}</p>`:''}${item.source?`<p class="meta">Источник · ${esc(item.source)}</p>`:''}</div>
-      <span class="schedule-status ${state}">${scheduleStates[state]}</span><div class="actions"><button type="button" class="btn ghost small" data-schedule-edit="${item.id}">Изменить</button><button type="button" class="btn ghost small" data-schedule-history="${item.id}">История</button></div></article>`;
+      return `<article class="schedule-row"><div><strong>${esc(item.subject)}</strong>${item.role?`<p class="meta">${esc(item.role)}</p>`:''}
+      <p>План ${planLabel(item)} · Факт ${item.done?fmtDate(item.done):'не внесён'}</p>
+      ${item.previous?`<p class="meta">Предыдущий срок ${fmtDate(item.previous)}</p>`:''}
+      ${item.note?`<p class="meta">${esc(item.note)}</p>`:''}${item.sourceRow?`<p class="meta">${esc(item.sourceRow)}</p>`:''}</div>
+      <span class="schedule-status ${state}">${scheduleStates[state]}</span><div class="actions">
+      ${!item.done&&!item.review&&!item.cancelled?`<button type="button" class="btn accent small" data-schedule-fact="${item.id}">Внести факт</button>`:''}
+      <button type="button" class="btn ghost small" data-schedule-edit="${item.id}">Изменить план и факт</button>
+      <button type="button" class="btn ghost small" data-schedule-history="${item.id}">История</button>${sourceButton(item.source)}</div></article>`;
     };
     const draw=()=>{
       const selected=items.filter(item=>item.year===+year.value);
@@ -185,34 +197,47 @@ function viewSchedules(role) {
         groups.get(key).push(item);
       }
       panel.querySelector('#scheduleReminders').innerHTML=scheduleReminderHTML(selected,day,true);
+      panel.querySelector('#scheduleTopics').innerHTML=topics.filter(topic=>topic.year===+year.value).map(topic=>
+        `<details class="card schedule-group"><summary><strong>${esc(topic.title)}</strong></summary>
+        ${topic.groups.map(group=>`<h3>${esc(group.label)}</h3><ul>${group.items.map(item=>`<li>${esc(item)}</li>`).join('')}</ul>`).join('')}
+        ${sourceButton(topic.source)}</details>`).join('');
       results.innerHTML=[...groups.values()].map(entries=>`<details class="card schedule-group" ${groups.size===1?'open':''}>
         <summary><small>${esc(entries[0].category)}</small><strong>${esc(entries[0].title)}</strong><span class="meta">Записей: ${entries.length}</span></summary>
         ${entries.map(row).join('')}</details>`).join('')||`<p class="card meta">${selected.length?'По фильтрам ничего не найдено.':`На ${year.value} год записи ещё не внесены.`}</p>`;
     };
-    const openEditor=item=>{
+    const openEditor=(item,factOnly=false)=>{
       editor=item;
-      edit.innerHTML=`<form class="card schedule-edit"><h2>${item?'Изменить запись':'Новая запись'}</h2>
+      edit.innerHTML=`<form class="card schedule-edit"><h2>${factOnly?'Внести факт':item?'Изменить запись':'Новая запись'}</h2>
+        ${factOnly?`<p><strong>${esc(item.subject)}</strong> · ${esc(item.title)}</p><p>План ${planLabel(item)}</p>
+          ${field('done','Фактическая дата','date',item.done,'required')}`:`
         ${field('title','Полное название графика','text',item?.title,'required maxlength="240"')}
+        ${field('year','Год графика','number',item?.year??year.value,'required min="2027" max="2100"')}
         <label class="field"><span class="lbl">Категория</span><select name="category">${scheduleCategories.map(category=>`<option ${item?.category===category?'selected':''}>${category}</option>`).join('')}</select></label>
         ${field('subject','ФИО и должность или инвентарный номер СИЗ','text',item?.subject,'required maxlength="240"')}
-        <div class="schedule-dates">${field('start','План · начало','date',item?.start,'required')}${field('end','План · конец','date',item?.end)}${field('done','Факт','date',item?.done)}</div>
-        ${field('source','Источник и строка','text',item?.source,'maxlength="300"')}
+        ${field('role','Должность','text',item?.role,'maxlength="240"')}
+        <div class="schedule-dates">${field('start','План · начало','date',item?.start,'required')}${field('end','План · конец','date',item?.end)}${field('done','Фактическая дата','date',item?.done)}</div>
+        <div class="schedule-dates">${field('startTime','Время начала','time',item?.startTime)}${field('endTime','Время конца','time',item?.endTime)}${field('previous','Предыдущий срок','date',item?.previous)}</div>
+        ${field('source','Источник','text',item?.source,'maxlength="300"')}
+        ${field('sourceRow','Строка источника','text',item?.sourceRow,'maxlength="240"')}
         <label class="field"><span class="lbl">Примечание</span><textarea name="note" maxlength="2000">${esc(item?.note||'')}</textarea></label>
         <label class="check"><input type="checkbox" name="cancelled" ${item?.cancelled?'checked':''}> Событие отменено</label>
+        <label class="check"><input type="checkbox" name="review" ${item?.review?'checked':''}> План требует сверки</label>`}
         <div class="actions"><button class="btn accent">Сохранить</button><button class="btn ghost" type="button" id="closeScheduleEditor">Закрыть</button></div><p class="meta" role="status"></p></form>`;
       edit.scrollIntoView({block:'nearest'});
       edit.querySelector('#closeScheduleEditor').onclick=()=>edit.replaceChildren();
       edit.querySelector('form').onsubmit=async event=>{
         event.preventDefault();
         const form=event.currentTarget, button=form.querySelector('[type=submit], button');
-        const values=Object.fromEntries(new FormData(form));
-        values.year=+year.value;values.cancelled=values.cancelled==='on';
+        const data=Object.fromEntries(new FormData(form));
+        const values=factOnly?{...editor,done:data.done}:{...data,year:+data.year,cancelled:data.cancelled==='on',review:data.review==='on'};
         if(editor){values.id=editor.id;values.revision=editor.revision;}
         button.disabled=true;
         try{
           const result=await serverRequest('/schedules',{method:'POST',body:values});
           const index=items.findIndex(entry=>entry.id===result.item.id);
           if(index===-1)items.push(result.item);else items[index]=result.item;
+          if(![...year.options].some(option=>+option.value===result.item.year))year.add(new Option(result.item.year,result.item.year));
+          year.value=result.item.year;
           edit.replaceChildren();draw();
         }catch(error){form.querySelector('[role=status]').textContent=error.message;}
         finally{button.disabled=false;}
@@ -229,10 +254,25 @@ function viewSchedules(role) {
     panel.querySelector('#scheduleQuery').oninput=draw;
     panel.querySelector('#scheduleState').onchange=draw;
     panel.querySelector('#scheduleSort').onchange=draw;
-    results.onclick=async event=>{
-      const item=items.find(entry=>entry.id===(event.target.dataset.scheduleEdit||event.target.dataset.scheduleHistory));
+    panel.onclick=async event=>{
+      const {scheduleSource,scheduleEdit,scheduleHistory,scheduleFact}=event.target.dataset;
+      if(scheduleSource){
+        const dialog=document.createElement('dialog');dialog.className='psgi-dialog schedule-source-dialog';
+        dialog.innerHTML='<h2>Фото источника</h2><div role="status">Загрузка…</div><form method="dialog"><button class="btn ghost mt">Закрыть</button></form>';
+        document.body.append(dialog);dialog.showModal();
+        let url;
+        dialog.onclose=()=>{if(url)URL.revokeObjectURL(url);dialog.remove();};
+        try{
+          url=await referenceBlob('/schedules/source/'+scheduleSource);
+          if(!dialog.isConnected){URL.revokeObjectURL(url);return;}
+          const image=new Image();image.alt='Фото исходного графика';image.src=url;
+          dialog.querySelector('[role=status]').replaceChildren(image);
+        }catch(error){dialog.querySelector('[role=status]').textContent=error.message;}
+        return;
+      }
+      const item=items.find(entry=>entry.id===(scheduleEdit||scheduleHistory||scheduleFact));
       if(!item)return;
-      if(event.target.dataset.scheduleEdit){openEditor(item);return;}
+      if(scheduleEdit||scheduleFact){openEditor(item,!!scheduleFact);return;}
       const dialog=document.createElement('dialog');dialog.className='psgi-dialog';
       dialog.innerHTML='<h2>История изменений</h2><div role="status">Загрузка…</div><form method="dialog"><button class="btn ghost mt">Закрыть</button></form>';
       document.body.append(dialog);dialog.showModal();dialog.onclose=()=>dialog.remove();
@@ -240,7 +280,7 @@ function viewSchedules(role) {
       try{
         const result=await serverRequest('/schedules/'+item.id+'/history');
         log.innerHTML=result.items.map(entry=>`<p><strong>Версия ${entry.revision} · ${esc(entry.author)}</strong><br>
-          ${fmtDT(entry.changed_at)} · План ${fmtDate(entry.item.start)}${entry.item.end?' — '+fmtDate(entry.item.end):''} · Факт ${entry.item.done?fmtDate(entry.item.done):'—'}
+          ${fmtDT(entry.changed_at)} · План ${planLabel(entry.item)} · Факт ${entry.item.done?fmtDate(entry.item.done):'—'}
           ${entry.item.cancelled?' · Отменено':''}${entry.item.note?`<br>${esc(entry.item.note)}`:''}</p>`).join('');
       }catch(error){log.textContent=error.message;}
     };

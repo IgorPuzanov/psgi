@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -14,11 +14,54 @@ const categories=['Проверка знаний','Инструктажи','Тр
 const isDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value))&&
   new Date(value).toISOString().slice(0,10)===value;
 const fail=(status,message)=>Object.assign(new Error(message),{status});
+const sourceName=/^photo_2026-11-27_15-\d{2}-\d{2}\.jpg$/;
+const text=(value,max)=>typeof value==='string'?value.trim().slice(0,max):'';
+function scheduleRecord(input){
+  const year=Number(input.year), title=text(input.title,240),subject=text(input.subject,240);
+  const {start}=input;
+  const end=input.end||'',done=input.done||'',previous=input.previous||'';
+  const startTime=input.startTime||'',endTime=input.endTime||'';
+  const validTime=value=>/^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  if(!Number.isInteger(year)||year<2027||year>2100||!title||!subject||!categories.includes(input.category)||
+     !isDate(start)||!(+start.slice(0,4)===year||input.category==='Дежурства'&&start===`${year-1}-12-31`)||
+     end&&(!isDate(end)||end<start)||done&&!isDate(done)||previous&&!isDate(previous)||
+     (startTime||endTime)&&(!validTime(startTime)||!validTime(endTime)||(end||start)+endTime<=start+startTime))
+    throw fail(400,'Проверьте название, сотрудника или СИЗ и даты графика.');
+  const cancelled=input.cancelled===true,review=input.review===true;
+  if (done&&(cancelled||review)) throw fail(400,'Факт можно внести после сверки плана для действующего события.');
+  return {year,title,subject,start,end,done,previous,startTime,endTime,category:input.category,cancelled,review,
+    role:text(input.role,240),note:text(input.note,2000),source:text(input.source,300),sourceRow:text(input.sourceRow,240)};
+}
+function sourceId(key){
+  const hash=createHash('sha256').update('psgi-schedules-2027:'+key).digest('hex');
+  return [hash.slice(0,8),hash.slice(8,12),hash.slice(12,16),hash.slice(16,20),hash.slice(20,32)].join('-');
+}
 
-export function workspaceRoutes(db, referenceRoot) {
+export async function workspaceRoutes(db, referenceRoot,scheduleRoot) {
   db.exec(`CREATE TABLE IF NOT EXISTS work_schedules(id TEXT PRIMARY KEY, year INTEGER NOT NULL, revision INTEGER NOT NULL, record TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS work_schedule_history(schedule_id TEXT NOT NULL REFERENCES work_schedules(id), revision INTEGER NOT NULL,
       author TEXT NOT NULL, changed_at INTEGER NOT NULL, record TEXT NOT NULL, PRIMARY KEY (schedule_id,revision));`);
+  let topics=[];
+  if(scheduleRoot){
+    const packet=JSON.parse(await readFile(join(scheduleRoot,'schedules.json'),'utf8'));
+    if(packet.version!==1||!Array.isArray(packet.records)||!Array.isArray(packet.topics))throw Error('Неверный формат комплекта графиков');
+    const pending=packet.records.map(input=>{
+      if(!/^[a-z][a-z0-9-]{2,80}$/.test(input.key)||!sourceName.test(input.source))throw Error('У записи графика отсутствует проверяемый источник');
+      return [sourceId(input.key),scheduleRecord(input)];
+    });
+    if(new Set(pending.map(([id])=>id)).size!==pending.length)throw Error('Повтор идентификатора в комплекте графиков');
+    topics=packet.topics;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const insert=db.prepare('INSERT OR IGNORE INTO work_schedules VALUES (?,?,1,?)');
+      const history=db.prepare('INSERT INTO work_schedule_history VALUES (?,1,?,?,?)');
+      for(const [id,record] of pending){
+        const encoded=JSON.stringify(record);
+        if(insert.run(id,record.year,encoded).changes)history.run(id,'Перенос из исходного графика',Date.now(),encoded);
+      }
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
+  }
 
   async function readReference(id) {
     if (!referenceRoot||!/^ref-\d{1,4}$/.test(id)) return null;
@@ -67,7 +110,17 @@ export function workspaceRoutes(db, referenceRoot) {
     if (path==='/schedules'&&req.method==='GET') {
       const items=db.prepare('SELECT id,year,revision,record FROM work_schedules ORDER BY year,id').all()
         .map(row=>({...JSON.parse(row.record),id:row.id,revision:row.revision}));
-      respond(200,{items}); return true;
+      respond(200,{items,topics}); return true;
+    }
+    const source=path.match(/^\/schedules\/source\/(photo_2026-11-27_15-\d{2}-\d{2}\.jpg)$/);
+    if(source&&req.method==='GET'){
+      if(!scheduleRoot)throw fail(404,'Фото доступно в закрытом комплекте графиков.');
+      const file=join(scheduleRoot,source[1]),info=await stat(file).catch(()=>null);
+      if(!info?.isFile())throw fail(404,'Фото не найдено.');
+      res.setHeader('Content-Type','image/jpeg');
+      res.setHeader('Content-Length',info.size);
+      await pipeline(createReadStream(file),res);
+      return true;
     }
     const history=path.match(/^\/schedules\/([\da-f-]{36})\/history$/);
     if (history&&req.method==='GET') {
@@ -77,23 +130,22 @@ export function workspaceRoutes(db, referenceRoot) {
     }
     if (path==='/schedules'&&req.method==='POST') {
       const input=await readJSON(req);
-      const getText=(value,max)=>typeof value==='string'?value.trim().slice(0,max):'';
-      const start=input.start,end=input.end||'',done=input.done||'';
-      const year=Number(input.year), title=getText(input.title,240), subject=getText(input.subject,240);
-      if (!Number.isInteger(year)||year<2027||year>2100||!title||!subject||!categories.includes(input.category)||
-          !isDate(start)||!start.startsWith(year+'-')||end&&(!isDate(end)||end<start)||done&&!isDate(done))
-        throw fail(400,'Проверьте название, сотрудника или СИЗ и даты графика.');
-      const record={year,title,subject,start,end,done,category:input.category,cancelled:input.cancelled===true,
-        note:getText(input.note,2000),source:getText(input.source,300)};
-      if (record.cancelled&&done) throw fail(400,'У отменённой записи должна быть пустая дата выполнения.');
+      const record=scheduleRecord(input);
       const id=input.id||randomUUID();
       db.exec('BEGIN IMMEDIATE');
       try {
-        const previous=db.prepare('SELECT revision FROM work_schedules WHERE id=?').get(id);
+        const previous=db.prepare('SELECT revision,record FROM work_schedules WHERE id=?').get(id);
         if (input.id&&(!previous||input.revision!==previous.revision)) throw fail(409,'Запись уже изменилась. Откройте графики заново.');
+        if(previous){
+          const original=JSON.parse(previous.record);
+          if(sourceName.test(original.source)){
+            record.source=original.source;
+            record.sourceRow=original.sourceRow;
+          }
+        }
         const revision=(previous?.revision||0)+1, encoded=JSON.stringify(record);
         db.prepare('INSERT INTO work_schedules VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET year=excluded.year,revision=excluded.revision,record=excluded.record')
-          .run(id,year,revision,encoded);
+          .run(id,record.year,revision,encoded);
         db.prepare('INSERT INTO work_schedule_history VALUES (?,?,?,?,?)').run(id,revision,user.name,Date.now(),encoded);
         db.exec('COMMIT');
         respond(200,{item:{...record,id,revision}});

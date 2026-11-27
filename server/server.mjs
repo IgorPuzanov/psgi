@@ -37,7 +37,7 @@ export async function createChatServer(config = {}) {
   const adminId=db.prepare("SELECT id FROM users WHERE login=? AND role='b'").get(config.primaryAdminLogin||process.env.PSGI_PRIMARY_ADMIN_LOGIN||bootstrapLogin)?.id;
   const dummyPassword=await passwordHash(randomBytes(32).toString('hex'));
   const allowedOrigins = new Set(config.allowedOrigins || (process.env.PSGI_ALLOWED_ORIGINS || 'https://igorpuzanov.github.io').split(',').map(s => s.trim()).filter(Boolean));
-  const routeWorkspace=workspaceRoutes(db,config.referenceRoot||process.env.PSGI_REFERENCE_DIR);
+  const routeWorkspace=await workspaceRoutes(db,config.referenceRoot||process.env.PSGI_REFERENCE_DIR,config.scheduleRoot||process.env.PSGI_SCHEDULE_DIR);
   const limits = new Map();
   function rateLimit(key, max, interval) {
     const now = Date.now(); let slot = limits.get(key);

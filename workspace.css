@@ -64,6 +64,9 @@
 .schedule-status.late { background: var(--bad-bg); color: var(--bad); }
 .schedule-status.done { background: var(--ok-bg); color: var(--ok); }
 .schedule-status.soon { background: var(--warn-bg); color: var(--warn); }
+.schedule-status.review { background: var(--warn-bg); color: var(--warn); }
+.schedule-source-dialog { width: min(94vw,960px); }
+.schedule-source-dialog img { display: block; width: 100%; height: auto; }
 .widget-picker > div { display: flex; align-items: center; gap: 8px; min-height: 40px; }
 .widget-picker .check { flex: 1; }
 @media (min-width: 580px) {
