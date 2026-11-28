@@ -486,6 +486,7 @@ const ICONS = {
   rig: '<path d="M12 2 7 21M12 2l5 19M8.6 15h6.8M9.8 10h4.4M4 21h16"/><path d="M12 2v3"/>',
   phone: '<path d="M5 3h3.5l1.5 5-2.2 1.4a11 11 0 0 0 6.8 6.8L16 14l5 1.5V19a2 2 0 0 1-2 2A16 16 0 0 1 3 5a2 2 0 0 1 2-2z"/>',
   edit: '<path d="M15 5l4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z"/>',
+  chat: '<path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H8l-4 2v-4.2a7.5 7.5 0 0 1 5-12.8h3.5a7.5 7.5 0 0 1 7.5 7.5Z"/><path d="M8 11h8M8 14h5"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   pin: '<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>'
 };
@@ -2177,7 +2178,7 @@ function routeCore() {
   viewRoles();
 }
 
-const PSGI_SW_VERSION = '25.17';
+const PSGI_SW_VERSION = '25.18';
 
 async function startApp() {
   const splashVisible = $('#launchSplash')?.hidden === false;

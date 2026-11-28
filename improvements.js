@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_RELEASE = 'psgi-2026-11-28-v25.17';
+const APP_RELEASE = 'psgi-2026-11-28-v25.18';
 const RELEASE_NOTES = [
   'Телефоны и инструкции по охране труда доступны с главной и из раздела «Информация».',
   'В заявке начальника можно выбрать инструкции, посмотреть общий черновик и распечатать его после сохранения.',
@@ -339,7 +339,7 @@ function viewBackup(role) {
 
 function viewReleases(role) {
   header('Что нового в ПСГИ', `/${role}/more`);
-  app.innerHTML = `<div class="card"><p class="meta">28.11.2026</p><h2>ПСГИ · 25.17</h2><ul>
+  app.innerHTML = `<div class="card"><p class="meta">28.11.2026</p><h2>ПСГИ · 25.18</h2><ul>
     <li>В ежедневнике выбор даты, компактная галочка и значки редактирования и удаления.</li>
     <li>Графики с редактированием плана и факта прямо в таблице.</li>
     <li>Геолокация в разделе карт и первая миссия «Учебный выезд».</li></ul>
@@ -351,12 +351,11 @@ function bottomNav() {
   let nav = document.getElementById('bottomNav');
   if (!nav) { nav = document.createElement('nav'); nav.id = 'bottomNav'; nav.className = 'bottom-nav no-print'; nav.setAttribute('aria-label', 'Главное меню'); document.body.append(nav); }
   const role = currentRole(), path = location.hash.slice(1) || '/';
-  const items = [['/', 'bolt', 'Главная'], [`/${role}`, 'clipboard', 'Заявки'], [`/${role}/instructions`, 'book', 'Инструкции'], [`/${role}/people`, 'people', 'Сотрудники'], [`/${role}/more`, 'gear', 'Разделы']];
+  const items = [['/', 'bolt', 'Главная'], [`/${role}`, 'clipboard', 'Заявки'], [`/${role}/chat`, 'chat', 'Чат'], [`/${role}/more`, 'gear', 'Разделы']];
   let activePath = `/${role}/more`;
   if (path === '/') activePath = '/';
   else if (path === `/${role}` || /\/(?:task|edit|new)(?:\/|$)/.test(path)) activePath = `/${role}`;
-  else if (/\/(instructions|materials|reference)(\/|$)/.test(path)) activePath = `/${role}/instructions`;
-  else if (path.endsWith('/people')) activePath = `/${role}/people`;
+  else if (/\/(chat|connection|chat-users)(\/|$)/.test(path)) activePath = `/${role}/chat`;
   nav.innerHTML = items.map(([href, ic, label]) => `<a href="#${href}" ${href === activePath ? 'aria-current="page" class="active"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('');
 }
 

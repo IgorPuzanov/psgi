@@ -53,7 +53,7 @@ async function viewChat(role, channel = 'team') {
   $('#chatExport').onclick = () => downloadFile(new File([JSON.stringify(chatMessages(), null, 2)], `ПСГИ_чат_${today()}.json`, { type: 'application/json' }));
   $('#chatForm').onsubmit = async e => {
     e.preventDefault(); const input = $('#chatText'), text = input.value.trim(); if (!text) return;
-    if (!me() && !session) { toast('Выбери сотрудника на главном экране или войди на сервер'); return; }
+    if (!me() && !session) { toast('Выбери сотрудника в «Заявках» или войди через «Подключение».'); return; }
     const message = { id: crypto.randomUUID(), channel, role: 'user', text, author: session?.user?.name || me(), userId: session?.user?.id, server: serverUrl(), at: Date.now(), state: session && serverUrl() ? 'queued' : 'local' };
     saveChatMessages([...chatMessages(), message]); input.value = ''; drawChatLog();
     if (channel === 'team') { await refreshTeamChat(); return; }
