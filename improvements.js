@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_RELEASE = 'psgi-2026-11-27-v25.16';
+const APP_RELEASE = 'psgi-2026-11-28-v25.17';
 const RELEASE_NOTES = [
   'Телефоны и инструкции по охране труда доступны с главной и из раздела «Информация».',
   'В заявке начальника можно выбрать инструкции, посмотреть общий черновик и распечатать его после сохранения.',
@@ -124,13 +124,13 @@ const saveRegister = entries => lsSet('psgiRegisters', JSON.stringify(entries));
 const registerEntries = () => jget('psgiRegisters', []);
 const byNewest = (a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0);
 function roleTiles(role) {
-  const items = [['guides', 'book', 'Типовые работы'], ['monthly', 'clipboard', 'Отчёты и нормированные задания'], ['ideas', 'bolt', 'Рационализаторские предложения'], ['chat', 'people', 'Внутренний чат'], ['assets', 'meter', 'Оборудование'], ['kusty', 'rig', 'Карты месторождений Сургутнефть'], ['map', 'pin', 'Карта оборудования'], ['devices', 'meter', 'Приборы и паспорта'], ['training', 'book', 'Обучение'], ['cars', 'pin', 'Машины'], ['backup', 'gear', 'Данные и копии'], ['releases', 'info', 'Что нового']];
+  const items = [['guides', 'book', 'Типовые работы'], ['monthly', 'clipboard', 'Нормированное задание'], ['ideas', 'bolt', 'Рационализаторские предложения'], ['assets', 'meter', 'Оборудование'], ['kusty', 'rig', 'Карты месторождений Сургутнефть'], ['map', 'pin', 'Карта оборудования'], ['devices', 'meter', 'Приборы и поверка'], ['training', 'book', 'Обучение'], ['cars', 'pin', 'Машины'], ['backup', 'gear', 'Данные и копии'], ['releases', 'info', 'Что нового']];
   if (isManager(role)) items.unshift(['registers', 'permit', 'СИЗ и журналы']);
-  return `<div class="tiles">${items.map(([path, ic, title]) => tile(`#/${role}/${path}`, ic, title)).join('')}</div>`;
+  return `<div class="tiles">${items.map(([path, ic, title]) => tile(`#/${role}/${path}`, ic, title)).join('')}${tile('#/h/games','game','Игры')}</div>`;
 }
 function viewMore(role) {
   header('Разделы', `/${role}`);
-  app.innerHTML = `<h2>Рабочие разделы</h2><div id="workspaceCatalog"></div><div class="quick-directories tiles">${tile(`#/${role}/phones`, 'phone', 'Телефонный справочник')}${tile(`#/${role}/instructions`, 'book', 'Инструкции')}</div>${roleTiles(role)}<div class="tiles">${tile(`#/${role}/people`, 'people', 'Сотрудники')}${tile(`#/${role}/docs/info`, 'info', 'Информация для ознакомления')}${tile(`#/${role}/docs/permit`, 'permit', 'Наряды')}${tile('#/e/tb', 'book', 'Техника безопасности')}${tile('#/e/new','clipboard','Новая заявка')}${tile('#/e','permit','Мои задания')}${tile(`#/${role}/archive`,'permit','Архив')}</div>
+  app.innerHTML = `<h2>Рабочие разделы</h2><div class="tiles">${tile(`#/${role}/chat`, 'people', 'Внутренний чат')}</div><div id="workspaceCatalog"></div><div class="quick-directories tiles">${tile(`#/${role}/phones`, 'phone', 'Телефонный справочник')}${tile(`#/${role}/instructions`, 'book', 'Инструкции')}</div>${roleTiles(role)}<div class="tiles">${tile(`#/${role}/people`, 'people', 'Сотрудники')}${tile(`#/${role}/docs/info`, 'info', 'Информация для ознакомления')}${tile(`#/${role}/docs/permit`, 'permit', 'Наряды')}${tile('#/e/tb', 'book', 'Техника безопасности')}${tile('#/e/new','clipboard','Новая заявка')}${tile('#/e','permit','Мои задания')}${tile(`#/${role}/archive`,'permit','Архив')}</div>
     <details class="card mt"><summary>Данные прежней версии на этом устройстве</summary>
       <p class="meta">Локальные заявки и журналы хранятся отдельно от рабочего аккаунта.</p><div class="actions">
       <a class="btn ghost small" href="#/e">Электромонтёр</a><a class="btn ghost small" href="#/m">Мастер</a><a class="btn ghost small" href="#/b">Начальник</a></div></details>`;
@@ -339,8 +339,8 @@ function viewBackup(role) {
 
 function viewReleases(role) {
   header('Что нового в ПСГИ', `/${role}/more`);
-  app.innerHTML = `<div class="card"><p class="meta">27.11.2026</p><h2>ПСГИ · 25.16</h2><ul>
-    <li>Рабочие столы мастера и начальника, ежедневник с датами и диктовкой.</li>
+  app.innerHTML = `<div class="card"><p class="meta">28.11.2026</p><h2>ПСГИ · 25.17</h2><ul>
+    <li>В ежедневнике выбор даты, компактная галочка и значки редактирования и удаления.</li>
     <li>Графики с редактированием плана и факта прямо в таблице.</li>
     <li>Геолокация в разделе карт и первая миссия «Учебный выезд».</li></ul>
     <details><summary>Ранние обновления</summary><ul>${RELEASE_NOTES.map(n => `<li>${esc(n)}</li>`).join('')}</ul></details></div>`;
@@ -465,7 +465,7 @@ async function enhancePage(role, parts) {
     if (lsGet('psgiSeenRelease') !== APP_RELEASE) {
       lsSet('psgiSeenRelease', APP_RELEASE);
       const notice=document.createElement('details');notice.className='release-notice';
-      notice.innerHTML=`<summary>Что нового</summary><div><p>Ежедневник, графики в таблицах и учебный выезд.</p><a href="#/${role}/releases">Все изменения</a></div>`;
+      notice.innerHTML=`<summary>Что нового</summary><div><p>Компактный ежедневник и обновлённый список разделов на главной.</p><a href="#/${role}/releases">Все изменения</a></div>`;
       app.append(notice);
     }
     const reset = $('#reset'); if (reset) reset.remove();

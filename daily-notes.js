@@ -1,7 +1,6 @@
 'use strict';
 
 const DAILY_NOTES_ID='workspace-daily-notes';
-const dailyOffset=(day,offset)=>new Date(Date.parse(day)+offset*86400000).toISOString().slice(0,10);
 
 function updateDailyNotes(change){
   return new Promise((resolve,reject)=>{
@@ -21,13 +20,11 @@ function updateDailyNotes(change){
 
 async function bindDailyNotes(panel){
   const today=workplaceDay();
-  const shortcuts=['Сегодня','Завтра','Послезавтра'];
   const templates=['Выдать задания','Провести инструктаж','Проверить комплект приборов','Проверить наряд-допуск','Просмотреть графики'];
-  panel.innerHTML=`<h2>Ежедневник</h2><div class="daily-dates" role="group" aria-label="День ежедневника">
-    ${shortcuts.map((title,i)=>`<button class="btn ghost small" data-daily-day="${dailyOffset(today,i)}" type="button">${title}</button>`).join('')}</div>
-    <form id="dailyNoteForm">
-      <div class="daily-fields"><label class="field"><span class="lbl">Что сделать</span><textarea name="text" rows="2" maxlength="1000" required placeholder="Запиши или надиктуй задачу"></textarea></label>
-      <label class="field"><span class="lbl">Дата</span><input type="date" name="day" value="${today}" required></label></div>
+  panel.innerHTML=`<form id="dailyNoteForm">
+      <div class="daily-heading"><h2>Ежедневник</h2>
+        <input type="date" name="day" aria-label="Дата ежедневника" value="${today}" required></div>
+      <label class="field daily-task-field"><span class="lbl">Что сделать</span><textarea name="text" rows="2" maxlength="1000" required placeholder="Запиши или надиктуй задачу"></textarea></label>
       <div class="daily-actions"><button class="btn accent small" type="submit">Добавить</button><button class="btn ghost small" type="button" id="dailyCancel" hidden>Отмена</button>
       <details><summary>Типовые задачи</summary><div>${templates.map(title=>`<button class="btn ghost small" type="button" data-daily-template="${title}">${title}</button>`).join('')}</div></details></div>
     </form>
@@ -35,13 +32,15 @@ async function bindDailyNotes(panel){
   const form=panel.querySelector('form'),list=panel.querySelector('#dailyList'),status=panel.querySelector('#dailyStatus');
   const add=form.querySelector('[type=submit]'),cancel=panel.querySelector('#dailyCancel');
   const day=form.elements.day,text=form.elements.text;
-  let notes=[],editing=null;
+  let notes=[],editing=null,deleted=null;
   const rows=entries=>`<ul class="daily-list">${entries.map(note=>`<li><label>
     <input type="checkbox" data-daily-check="${esc(note.id)}" ${note.done?'checked':''}>
     <span>${esc(note.text)}${note.day!==day.value?`<small>${fmtDate(note.day)}</small>`:''}</span></label>
-    <button class="btn ghost small" data-daily-edit="${esc(note.id)}" type="button">Изменить</button></li>`).join('')}</ul>`;
+    <div class="daily-row-actions">
+      <button class="daily-icon" data-daily-edit="${esc(note.id)}" type="button" aria-label="Изменить задачу" title="Изменить задачу">${icon('edit')}</button>
+      <button class="daily-icon daily-trash" data-daily-delete="${esc(note.id)}" type="button" aria-label="Удалить задачу" title="Удалить задачу">${icon('trash')}</button>
+    </div></li>`).join('')}</ul>`;
   const draw=()=>{
-    panel.querySelectorAll('[data-daily-day]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.dailyDay===day.value)));
     const chosen=notes.filter(note=>note.day===day.value);
     const overdue=notes.filter(note=>note.day<today&&note.day!==day.value&&!note.done);
     list.innerHTML=(chosen.length?rows(chosen):'<p class="meta">На выбранную дату задач нет.</p>')+
@@ -57,15 +56,43 @@ async function bindDailyNotes(panel){
   draw();
   day.onchange=draw;
   cancel.onclick=()=>{reset();draw();};
-  panel.onclick=event=>{
-    const {dailyDay,dailyTemplate,dailyEdit}=event.target.dataset;
-    if(dailyDay){day.value=dailyDay;draw();}
-    if(dailyTemplate){text.value=dailyTemplate;text.focus();event.target.closest('details').open=false;}
+  panel.onclick=async event=>{
+    const button=event.target.closest('button');
+    if(!button)return;
+    const {dailyTemplate,dailyEdit,dailyDelete,dailyUndo}=button.dataset;
+    if(dailyTemplate){text.value=dailyTemplate;text.focus();button.closest('details').open=false;}
     if(dailyEdit){
       const note=notes.find(entry=>entry.id===dailyEdit);
       if(!note)return;
       editing=note.id;text.value=note.text;day.value=note.day;add.textContent='Сохранить';cancel.hidden=false;
       text.focus();draw();
+    }
+    if(dailyDelete){
+      button.disabled=true;
+      let removed;
+      const ok=await save(current=>{
+        const index=current.findIndex(note=>note.id===dailyDelete);
+        if(index<0)return current;
+        removed={index,note:current[index]};
+        return current.filter(note=>note.id!==dailyDelete);
+      },'Задача удалена.');
+      if(!ok){button.disabled=false;return;}
+      if(editing===dailyDelete)reset();
+      if(removed&&panel.isConnected){
+        deleted=removed;
+        const undo=document.createElement('button');
+        undo.type='button';undo.className='daily-undo';undo.dataset.dailyUndo='1';undo.textContent='Отменить';
+        status.append(' ',undo);
+      }
+    }
+    if(dailyUndo&&deleted){
+      const {note,index}=deleted;
+      button.disabled=true;
+      const ok=await save(current=>{
+        if(current.some(entry=>entry.id===note.id))return current;
+        const restored=current.slice();restored.splice(index,0,note);return restored;
+      },'Задача восстановлена.');
+      if(ok)deleted=null;else button.disabled=false;
     }
   };
   list.onchange=async event=>{

@@ -595,18 +595,13 @@ function viewRoles() {
       ${link('/'+role+'/documents','book','Документация')}
       ${link('/' + role + '/docs/info', 'info', 'Информация для ознакомления')}
       ${link('/h/local-schedules','meter','Графики')}
-      ${link('/'+role+'/devices','meter','Приборы и поверка')}
-      ${link('/'+role+'/monthly','clipboard','Нормированное задание')}
-    </nav>
-    <nav class="dashboard-grid home-directories" aria-label="Другие разделы">
       ${link('/'+role,'permit','Журнал заявок')}
       ${link('/h/map-location','pin','Карты и геолокация')}
-      ${link('/h/games', 'game', 'Игры')}
     </nav>
     <div id="homeWorkspace"></div>
     ${bdayBannerHTML()}
     <p class="home-note">Заявки и протоколы этого устройства доступны в «Разделы → Данные и копии» для переноса.</p>`;
-  populateHomeWorkspace(role,hello);
+  populateHomeWorkspace(hello);
   bindDailyNotes($('#dailyNotes'));
   app.querySelectorAll('[data-workspace-desk]').forEach(button=>button.onclick=()=>{
     lsSet('workspaceDesk',button.dataset.workspaceDesk);
@@ -2182,7 +2177,7 @@ function routeCore() {
   viewRoles();
 }
 
-const PSGI_SW_VERSION = '25.16';
+const PSGI_SW_VERSION = '25.17';
 
 async function startApp() {
   const splashVisible = $('#launchSplash')?.hidden === false;

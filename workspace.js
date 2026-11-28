@@ -376,7 +376,7 @@ function widgetOrder(user,items) {
   return Array.isArray(stored)?stored.filter(path=>items.some(item=>item.path===path)):[];
 }
 
-async function populateHomeWorkspace(role,hello) {
+async function populateHomeWorkspace(hello) {
   const panel=$('#homeWorkspace'),greeting=$('#homeGreeting');
   const user=await workspaceIdentity().catch(()=>null);
   if(!panel.isConnected)return;
@@ -408,13 +408,6 @@ async function populateHomeWorkspace(role,hello) {
       slot.innerHTML=`<section class="home-widget-group"><div class="section-label"><h3>Сроки по графикам</h3><a href="#/${user.role}/schedules">Открыть графики</a></div>${scheduleReminderHTML(items,workplaceDay())}</section>`;
     }).catch(()=>{});
   }
-  const widgets=workspaceWidgets(user?.role||role,user);
-  const active=widgetOrder(user,widgets).map(path=>widgets.find(item=>item.path===path));
-  if(active.length){
-    const section=document.createElement('section');section.className='home-widget-group';
-    section.innerHTML=`<div class="section-label"><h3>Ярлыки</h3><a href="#/${user?.role||role}/more">Настроить</a></div><div class="tiles">${active.map(item=>tile(item.url,item.icon,item.title)).join('')}</div>`;
-    panel.append(section);
-  }
 }
 
 async function populateWorkspaceCatalog(role) {
@@ -425,8 +418,10 @@ async function populateWorkspaceCatalog(role) {
   let selected=widgetOrder(user,items);
   const draw=()=>{
     const ordered=[...selected.map(path=>items.find(item=>item.path===path)),...items.filter(item=>!selected.includes(item.path))];
+    const shortcuts=ordered.slice(0,selected.length);
     panel.innerHTML=`<div class="tiles">${tile('#/h/local-schedules','clipboard','Графики на устройстве')}${workspaceRole(user)?tile(`#/${user.role}/schedules`,'clipboard','Графики на сервере'):''}</div>
-      <details class="card mt" ${panel.querySelector('details')?.open?'open':''}><summary>Ярлыки на главной</summary><div class="widget-picker">
+      ${shortcuts.length?`<h3>Ярлыки</h3><div class="tiles">${shortcuts.map(item=>tile(item.url,item.icon,item.title)).join('')}</div>`:''}
+      <details class="card mt" ${panel.querySelector('details')?.open?'open':''}><summary>Настроить ярлыки</summary><div class="widget-picker">
       ${ordered.map(item=>`<div><label class="check"><input type="checkbox" data-widget="${item.path}" ${selected.includes(item.path)?'checked':''}> ${item.title}</label>
         ${selected.indexOf(item.path)>0?`<button type="button" class="btn ghost small" data-widget-up="${item.path}" aria-label="Поднять ${item.title}">↑</button>`:''}</div>`).join('')}
       <button class="btn ghost small" type="button" id="widgetsReset">Сбросить ярлыки</button></div></details>`;
